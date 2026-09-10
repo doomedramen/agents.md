@@ -641,8 +641,8 @@ Agents:
 3. fetches the source repository
 4. resolves the requested ref to a full commit
 5. validates the package
-6. detects collisions and local modifications
-7. installs files
+6. calculates package-declared replacements
+7. writes files
 8. writes the relevant state files: `agents.yaml` for project targets and
    `global.yaml`/`global.lock` for global targets
 
@@ -652,13 +652,12 @@ Global state is separate from project state, but the package manifest decides
 which state it uses:
 
     npx agents.md add @acme/agent-standards
-    npx agents.md install
 
 If `agent.yaml` declares both project and global targets, `add` records the
-same source in both `agents.yaml` and `global.yaml`, and `install` reconciles
-both. A package that declares only global targets updates only `global.yaml`.
-The CLI shows the global write plan and uses the configured target adapter;
-there is no scope flag to override package metadata.
+same source in both `agents.yaml` and `global.yaml`, and writes both sets of
+targets. A package that declares only global targets updates only
+`global.yaml`. The CLI uses the configured target adapter; there is no scope
+flag to override package metadata.
 
 ### Add package directly from Git
 
@@ -670,40 +669,13 @@ The public index is optional:
 Existing Git authentication must be used. Agents does not create a separate
 GitHub account or credential system.
 
-### Restore a project
+### Add replaces declared targets
 
-    git clone git@github.com:acme/shop.git
-    cd shop
-    npx agents.md install
-
-`agents install` prefers commits in `agents.lock`. It does not need the
-public index when the manifest and lockfile contain explicit source
-references.
-
-For global state:
-
-    npx agents.md install
-
-This reads project state and the user's global manifest/lockfile, then
-resolves each declared logical target to the appropriate directory.
-
-### Update packages
-
-    npx agents.md outdated
-    npx agents.md diff
-    npx agents.md update
-
-Updates produce ordinary working-tree changes suitable for a normal pull
-request. Unsafe local modifications stop the update.
-
-### Remove a package
-
-    npx agents.md remove official/nextjs
-
-Agents removes only files owned exclusively by the package, after checking
-for local changes. It updates every state file covered by the package's
-declared targets. A package installed in both scopes is removed from both by
-one command.
+`add` is the only MVP command. It always replaces each package-declared target
+at its resolved project or global path, including an existing `AGENTS.md` or
+generated `CLAUDE.md`. It never replaces files outside the package's declared
+targets. Future commands may add safe restore, update, diff, and removal
+workflows.
 
 ## 10. CLI
 
@@ -717,9 +689,12 @@ local project may install it as a dev dependency for faster repeat use, but
 the package is only the CLI distribution; package files and index data remain
 in Git repositories.
 
-Initial commands:
+Initial command:
 
-    npx agents.md add
+    npx agents.md add <source>
+
+Potential later commands:
+
     npx agents.md install
     npx agents.md remove
     npx agents.md update
@@ -730,9 +705,6 @@ Initial commands:
     npx agents.md search
     npx agents.md info
     npx agents.md check
-
-Potential later commands:
-
     npx agents.md publish
     npx agents.md validate
     npx agents.md doctor
@@ -741,21 +713,12 @@ Potential later commands:
     npx agents.md clean
 
 Scope is not a CLI selection. The installed package's `agent.yaml` declares
-the scope and agent for every target. `agents add` and `agents install` route
-project targets to the consuming repository and global targets to the
-appropriate user-global adapter. A package that declares both scopes updates
-both state files. There is no `--scope` or `--global` target-selection flag.
+the scope and agent for every target. `agents.md add` routes project targets
+to the consuming repository and global targets to the appropriate user-global
+adapter. A package that declares both scopes updates both state files. There
+is no `--scope` or `--global` target-selection flag.
 
-### `agents targets`
-
-Shows supported agent adapters and their resolved project/global roots. This
-is the diagnostic command for confirming where package-declared targets will
-write files:
-
-    npx agents.md targets
-    npx agents.md targets --agent codex
-
-### `agents add`
+### `agents.md add`
 
 Examples:
 
@@ -763,53 +726,11 @@ Examples:
     npx agents.md add acme/agents#packages/base
     npx agents.md add https://github.com/acme/agents.git#packages/base
     npx agents.md add ./agent-packages/base
-    npx agents.md add official/nextjs --dry-run
     npx agents.md add @acme/agent-standards
 
-The command resolves, validates, plans, and installs package files. It must
-show conflicts before writing files. It writes each target according to the
-scope and agent declared in the package's `agent.yaml`.
-
-### `agents install`
-
-Reads project `agents.yaml`/`agents.lock` and user-global
-`global.yaml`/`global.lock`, fetches locked Git commits, and restores every
-declared target. If a lockfile does not exist, it resolves selectors and
-creates the relevant lockfile. There is no scope-selection flag.
-
-### `agents update`
-
-Checks source Git refs for newer commits or tags, displays the proposed file
-changes, and updates the lockfile after a safe install.
-
-Useful options:
-
-    npx agents.md update --dry-run
-    npx agents.md update --interactive
-    npx agents.md update official/nextjs --force
-
-`--force` is an explicit destructive choice and must clearly warn that local
-changes may be overwritten.
-
-### `agents diff`
-
-Shows differences between installed files and package files at the locked or
-incoming source commit:
-
-    npx agents.md diff
-    npx agents.md diff official/nextjs
-
-### `agents check`
-
-Checks that:
-
-- each relevant lockfile matches its manifest
-- locked package commits are available and valid
-- installed files match lockfile hashes
-- no managed file is unexpectedly missing
-- package ownership is unambiguous
-
-    npx agents.md check --frozen
+The command resolves, validates, and replaces package-declared files. It
+writes each target according to the scope and agent declared in the package's
+`agent.yaml`, then records the source commit and rendered file hashes.
 
 ## 11. Project manifest
 
@@ -952,15 +873,15 @@ alternate user-controlled scope selectors.
 
 ## 13. Resolution, cache, and transactions
 
-High-level install algorithm:
+High-level `add` algorithm:
 
-    read agents.yaml and agents.lock
+    parse the package source reference
           |
           v
-    fetch source repository into Git cache
+    fetch source repository through Git
           |
           v
-    resolve or verify full commit
+    resolve the selected ref to a full commit
           |
           v
     read agent.yaml at that commit
@@ -972,10 +893,7 @@ High-level install algorithm:
     validate paths and package files
           |
           v
-    calculate writes, removals, and conflicts
-          |
-          v
-    check local modifications
+    calculate declared replacements
           |
           v
     stage complete operation
@@ -988,8 +906,8 @@ are relative to a built-in or explicitly configured agent target root. The
 package declares the scope and logical target; the package cannot choose the
 physical root.
 
-The operation should be transactional where practical. A failed install must
-not leave half a package installed.
+The operation should be transactional where practical. A failed add must not
+leave half a package installed or update only one scope's state file.
 
 Repositories and index checkouts may be cached in the platform-specific
 cache directory, for example:
@@ -1024,52 +942,25 @@ Example conflict:
 
 Both packages install the same path.
 
-Agents must stop rather than silently overwrite. Future versions may support
-explicit precedence, fragments, composition, or generated aggregate files.
-Agent-native precedence between global and project files remains the
-responsibility of the target agent; Agents does not merge those files.
+The MVP treats `add` as the replacement authority for declared targets. A
+later package add may replace a file installed by an earlier package, and the
+latest lockfile records the new owner. Two declarations in the same package
+that resolve to one physical path are invalid. Agent-native precedence
+between global and project files remains the responsibility of the target
+agent; Agents does not merge those files.
 
-When removing a package:
-
-- remove files owned only by that package
-- preserve files shared by another package if sharing is later supported
-- stop when a file has local changes
+Future versions may support explicit precedence, fragments, composition,
+ownership-aware removal, or generated aggregate files.
 
 ## 15. Local modifications and updates
 
-For each managed target, Agents compares:
+The MVP deliberately does not protect local modifications. `add` replaces
+every declared target, including a locally edited `AGENTS.md`, because the
+command's contract is to make the selected package authoritative.
 
-- the previous package hash
-- the current installed file hash
-- the incoming package hash
-
-The target record includes scope, agent, and relative destination path. The
-same protection applies to files in global agent directories.
-
-Required behavior:
-
-    unchanged locally, changed upstream
-      safe update
-
-    changed locally, unchanged upstream
-      preserve local file and report drift
-
-    changed locally, changed upstream
-      stop and require review or explicit force
-
-V1 may block unsafe replacement rather than attempt a Markdown merge.
-
-Example error:
-
-    Cannot update CLAUDE.md.
-
-    The file has changed locally since installation.
-
-    Review:
-      npx agents.md diff official/nextjs
-
-    Overwrite explicitly:
-      npx agents.md update official/nextjs --force
+The lockfile still records rendered file hashes and ownership. Future
+restore/update commands can use those hashes to detect drift and offer safe
+three-way review before replacing a modified file.
 
 ## 16. Security and path safety
 
@@ -1097,11 +988,9 @@ For project scope, the active scope root is the consuming repository. For
 global scope, it is the selected agent's registered global root. A package
 cannot choose an arbitrary global root or write to another user's files.
 
-Global writes are permitted only when the locked package manifest declares a
-global target. The CLI must show those writes in its plan, require normal
-confirmation for a new global target unless configured otherwise, and use the
-same local-modification protection as project writes. A CLI flag must not
-override the package-declared scope.
+Global writes are permitted only when the resolved package manifest declares a
+global target. The CLI reports those replacements and uses the configured
+target adapter. A CLI flag must not override the package-declared scope.
 
 The index validator applies the same package validation before accepting an
 entry.
@@ -1418,21 +1307,14 @@ The first usable version must support:
 
 ### Commands
 
-    npx agents.md add
-    npx agents.md install
-    npx agents.md remove
-    npx agents.md list
-    npx agents.md targets
-    npx agents.md diff
-    npx agents.md update
+    npx agents.md add <source>
 
 ### Required behavior
 
 - full Git commit locking
 - explicit source URL and package path
 - file ownership
-- collision detection
-- local modification protection
+- replacement of existing declared target files
 - safe path validation
 - project and global installation scopes
 - target adapters for supported agents
@@ -1440,7 +1322,7 @@ The first usable version must support:
 - separate ownership and lock state per scope
 - no package scripts
 - transactional installation where practical
-- operation without the public index after resolution
+- operation from direct Git sources without the public index
 
 The MVP does not require a public website, hosted API, or central registry
 database.
@@ -1485,7 +1367,7 @@ The first milestone is complete when this works:
     git init demo
     cd demo
 
-    npx agents.md add github:example/agent-packages#nextjs
+    npx agents.md add @doomedramen/agents-nextjs
 
 and produces:
 
@@ -1497,41 +1379,26 @@ and produces:
 `CLAUDE.md` is a generated native import adapter containing `@AGENTS.md`,
 not a second hand-maintained copy of the instructions.
 
-On another machine:
-
-    git clone demo
-    cd demo
-    npx agents.md install
-
-must reproduce the same managed files from the locked Git commit, without
-requiring the public index.
-
-The following must also work:
-
-    npx agents.md diff
-    npx agents.md update
-    npx agents.md remove official/nextjs
-
-without silently overwriting or deleting locally modified files.
+If `AGENTS.md` or any other declared target already exists, `add` replaces it
+with the content from the resolved Git commit and records the new hashes in
+the lockfile.
 
 Global installation must also work independently:
 
-    npx agents.md add github:example/agent-packages#base
-    npx agents.md install
+    npx agents.md add @acme/global-agent-standards
 
 When that package's `agent.yaml` declares only a Codex global target, this
 must write only to the configured Codex global target, record the resolved
 source commit in `global.lock`, and leave project files and `agents.lock`
-unchanged. A later update or removal must protect locally modified global
-files.
+unchanged.
 
-The public discovery path must additionally work from Git alone:
+The package source and lockfile must make the result reviewable and
+reproducible from Git alone:
 
 1. a package source repository contains a valid package
-2. an index pull request adds a pointer entry
-3. GitHub Actions validates the entry
-4. the merged index commit exposes the package to `agents search`
-5. `agents add` fetches package files from the source Git commit
+2. `add` fetches the source Git commit
+3. the package manifest declares every project/global target
+4. the lockfile records the source commit and rendered file hashes
 
 ## 30. Product positioning
 
@@ -1565,10 +1432,10 @@ The conceptual comparison is:
 11. Canonical instructions are stored once; agent-specific entrypoints are
     generated from them when native imports exist.
 12. npm distributes the TypeScript CLI only; Git stores packages and indexes.
-11. The public index is optional infrastructure.
-12. Index metadata never replaces source package content.
-13. The system is agent-neutral.
-14. Simple file installation comes before clever composition.
-15. Local changes are never silently destroyed.
-16. A project remains usable if Agents or its public index disappears.
-17. Every durable registry state has a reviewable Git representation.
+13. The public index is optional infrastructure.
+14. Index metadata never replaces source package content.
+15. The system is agent-neutral.
+16. Simple file installation comes before clever composition.
+17. The MVP's replacement behavior is explicit and limited to declared paths.
+18. A project remains usable if Agents or its public index disappears.
+19. Every durable registry state has a reviewable Git representation.
