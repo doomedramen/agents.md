@@ -15,14 +15,13 @@ You need Node.js 20 or newer and Git.
 npx @doomedramen/agents.md add github:acme/agent-files#packages/nextjs
 ```
 
-The command accepts GitHub shorthands, Git URLs, and local package paths:
+The command accepts GitHub shorthands and Git URLs:
 
 ```sh
 npx @doomedramen/agents.md add @acme/agent-files
 npx @doomedramen/agents.md add github:acme/agent-files#packages/nextjs
 npx @doomedramen/agents.md add https://github.com/acme/agent-files.git#packages/nextjs
 npx @doomedramen/agents.md add git@github.com:acme/agent-files.git
-npx @doomedramen/agents.md add ./agent-packages/nextjs
 ```
 
 `@owner/repo` names a GitHub source. The CLI fetches that repository as a Git
@@ -30,15 +29,16 @@ checkout; it does not install an npm dependency.
 
 ## Try the reference packages
 
-The repository ships two small packages that show the intended split between
-global and project instructions.
+The [reference package repository](https://github.com/doomedramen/agent-packages)
+contains installable examples for project and global instructions. Each package
+declares its scope in `agent.yaml`.
 
 ### Project instructions
 
 Run this command from a Git repository:
 
 ```sh
-npx @doomedramen/agents.md add github:doomedramen/agents.md#examples/project-typescript
+npx @doomedramen/agents.md add github:doomedramen/agent-packages#packages/project-typescript
 ```
 
 The package writes `AGENTS.md`, a Claude import adapter, `agents.yaml`, and
@@ -46,8 +46,8 @@ The package writes `AGENTS.md`, a Claude import adapter, `agents.yaml`, and
 
 Open the package files:
 
-- [Project manifest](examples/project-typescript/agent.yaml)
-- [Project instructions](examples/project-typescript/AGENTS.md)
+- [Project manifest](https://github.com/doomedramen/agent-packages/blob/main/packages/project-typescript/agent.yaml)
+- [Project instructions](https://github.com/doomedramen/agent-packages/blob/main/packages/project-typescript/AGENTS.md)
 
 ### Global instructions
 
@@ -55,7 +55,7 @@ Review the file before installing it. A global package changes the files that
 your agents read across projects.
 
 ```sh
-npx @doomedramen/agents.md add github:doomedramen/agents.md#examples/global-baseline
+npx @doomedramen/agents.md add github:doomedramen/agent-packages#packages/global-baseline
 ```
 
 The package writes Codex guidance to `~/.codex/AGENTS.md`, Claude guidance to
@@ -64,8 +64,8 @@ configured agents directory.
 
 Open the package files:
 
-- [Global manifest](examples/global-baseline/agent.yaml)
-- [Global instructions](examples/global-baseline/AGENTS.md)
+- [Global manifest](https://github.com/doomedramen/agent-packages/blob/main/packages/global-baseline/agent.yaml)
+- [Global instructions](https://github.com/doomedramen/agent-packages/blob/main/packages/global-baseline/AGENTS.md)
 
 The package manifest sets the scope. The command has no `--global` or
 `--project` flag.
@@ -141,7 +141,7 @@ The MVP resolves direct Git sources. The Git-backed package index described in
 
 ## Public references
 
-The local examples use patterns from these public sources:
+The reference packages use patterns from these public sources:
 
 - [Codex instructions and scope](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
 - [Claude Code memory and imports](https://code.claude.com/docs/en/memory)
@@ -152,8 +152,9 @@ The local examples use patterns from these public sources:
 - [Codex global template](https://github.com/yuanguang-ai-lab/codex-global-agents-template/blob/main/AGENTS.md)
 - [Skills documentation](https://www.skills.sh/docs) for GitHub-native package discovery.
 
-The local files are original compositions. [examples/README.md](examples/README.md)
-explains the research behind each pattern.
+The reference files are original compositions. The package repository keeps
+their manifests and source files together so the commands above install the
+same files shown in the documentation.
 
 ## Development
 
