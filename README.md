@@ -85,8 +85,8 @@ the committed state.
 ```yaml
 version: 2
 packages:
-  - id: typescript
-    source: github:acme/agent-rules#packages/typescript
+  - id: project-typescript
+    source: github:doomedramen/agent-packages#packages/project-typescript
     ref: main
 packs: []
 outputs:
