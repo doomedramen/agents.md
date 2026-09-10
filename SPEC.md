@@ -14,6 +14,9 @@ It distributes files such as:
 - `GEMINI.md`
 - other current or future agent instruction/configuration files
 
+It serves both project-local files committed with a repository and global
+files loaded by an agent across projects.
+
 The product is Git-native by design. GitHub and Git are used for both
 package storage and registry indexing. Agents does not upload package
 contents to a separate storage service and does not require a registry
@@ -55,6 +58,7 @@ Agents should make agent instruction files:
 - easy to update
 - easy to review
 - usable privately within organisations
+- usable at project and user-global scope
 - independent of any particular coding agent
 - naturally compatible with GitHub pull requests and normal Git workflows
 
@@ -134,18 +138,44 @@ repositories. It is not a separate content-hosting or database service.
 
 ### Project manifest
 
-`agents.yaml` declares packages a project uses and records enough source
-information to install them without resolving the short name again.
+`agents.yaml` declares project-scope packages and records enough source
+information to install them without resolving the short name again. Global
+scope uses a separate user manifest.
 
 ### Lockfile
 
 `agents.lock` records exact source commits, file hashes, ownership, and the
-index commit used for registry resolution.
+index commit used for project-scope resolution. Global scope uses a separate
+global lockfile.
 
 ### Selector
 
 A selector is a mutable request such as a branch, tag, or semver range.
 Selectors are resolved to a full Git commit before installation.
+
+### Scope
+
+Agents has two installation scopes:
+
+- `project`: files available inside one consuming repository
+- `global`: files available across projects for one user and agent
+
+Project scope is the default. Global scope always requires an explicit
+selection.
+
+### Agent target
+
+An agent target is a logical destination identified by an agent, scope, and
+path relative to that scope's root. Examples:
+
+    project / AGENTS.md
+    project / .cursor/rules/frontend.mdc
+    global / codex / AGENTS.md
+    global / claude-code / CLAUDE.md
+
+The CLI resolves logical global targets through built-in, versioned adapters
+to platform-specific directories. Package manifests never contain arbitrary
+absolute home-directory paths.
 
 ## 4. Source-of-truth model
 
@@ -154,9 +184,11 @@ Selectors are resolved to a full Git commit before installation.
 | Package files and `agent.yaml` | Source Git repository at commit | Package content |
 | Registered package pointer | Index Git repository | Discovery |
 | Derived package metadata | Index entry, verified from source | Search and display |
-| Requested dependencies | `agents.yaml` | Project intent |
-| Resolved dependency state | `agents.lock` | Reproducible installation |
-| Installed files | Project working tree | Files consumed by agents |
+| Requested project dependencies | `agents.yaml` | Project intent |
+| Requested global dependencies | User global manifest | User intent |
+| Resolved scope state | Scope-specific lockfile | Reproducible installation |
+| Installed project files | Project working tree | Files consumed by agents |
+| Installed global files | User/agent global directories | Files consumed across projects |
 | Local Git/cache data | Disposable local cache | Performance only |
 
 The source repository is authoritative for package content. The index may
@@ -218,8 +250,46 @@ Optional metadata:
     conflicts:
       - legacy-nextjs
 
-V1 keeps the schema small. Package manifests declare files; they do not
-declare executable hooks.
+### Scope-aware files
+
+The scalar `files` form is shorthand for project-scope files whose source
+path and destination path are identical. Packages that serve global and
+project installations use explicit targets:
+
+    schema: 1
+    name: base
+    description: Shared coding-agent instructions
+
+    files:
+      - source: project/AGENTS.md
+        targets:
+          - scope: project
+            path: AGENTS.md
+
+      - source: global/codex/AGENTS.md
+        targets:
+          - scope: global
+            agent: codex
+            path: AGENTS.md
+
+      - source: global/claude/CLAUDE.md
+        targets:
+          - scope: global
+            agent: claude-code
+            path: CLAUDE.md
+
+Each target declares:
+
+- `scope`: `project` or `global`
+- `agent`: required for global targets; optional for shared project files
+- `path`: relative path below the resolved scope root
+
+One source file may target both scopes. One package may provide different
+files for different agents. A global install selects only global targets; it
+must never copy project files into a user's home directory.
+
+V1 keeps the schema small. Package manifests declare files and destinations;
+they do not declare executable hooks.
 
 ## 6. Source repository rules
 
@@ -270,12 +340,19 @@ Recommended source repository:
     ├── agents/
     │   ├── base/
     │   │   ├── agent.yaml
-    │   │   ├── AGENTS.md
+    │   │   ├── project/
+    │   │   │   └── AGENTS.md
+    │   │   ├── global/
+    │   │   │   ├── claude/
+    │   │   │   │   └── CLAUDE.md
+    │   │   │   └── codex/
+    │   │   │       └── AGENTS.md
     │   │   └── README.md
     │   └── nextjs/
     │       ├── agent.yaml
-    │       ├── AGENTS.md
-    │       ├── CLAUDE.md
+    │       ├── project/
+    │       │   ├── AGENTS.md
+    │       │   └── CLAUDE.md
     │       └── README.md
     └── .github/
         └── workflows/
@@ -288,7 +365,9 @@ Naming rules:
   package slugs.
 - Give every package a short stable slug matching its directory where
   practical.
-- Keep `agent.yaml` at package root beside the instruction files.
+- Keep `agent.yaml` at package root beside the scope directories.
+- Use `project/` and `global/<agent>/` when a package serves both scopes.
+  Flat project files remain valid for project-only packages.
 - Put human documentation in the source repository `README.md` and, when a
   repository contains multiple packages, in each package's `README.md`.
 - Use `agents/` as the preferred package container. Accept `packages/` as
@@ -360,6 +439,13 @@ An index entry contains a pointer, not package content:
         - react
         - typescript
       homepage: https://github.com/example/agent-files
+      supports:
+        agents:
+          - claude-code
+          - codex
+        scopes:
+          - project
+          - global
 
     observed:
       sourceCommit: 0123456789abcdef0123456789abcdef01234567
@@ -370,6 +456,8 @@ Rules:
 - `id` is unique within one index.
 - `source.url` and `source.path` identify the package.
 - `metadata` is discovery data, not package content.
+- `metadata.supports.agents` and `metadata.supports.scopes` are derived
+  from package targets.
 - `observed.sourceCommit` is advisory and must use a full Git SHA.
 - A validator fetches the source package and checks that metadata and manifest
   agree before an entry is accepted.
@@ -435,6 +523,7 @@ package path.
 - clone or fetch every public source package
 - validate `agent.yaml`
 - verify every declared file exists
+- validate target scopes, agent identifiers, and relative destination paths
 - reject unsafe paths and symlink traversal
 - reject duplicate or ambiguous entries
 - check that derived metadata matches the source manifest
@@ -482,6 +571,23 @@ Agents:
 7. installs files
 8. writes `agents.yaml` and `agents.lock`
 
+### Add global instructions
+
+Global state is separate from project state:
+
+    agents init --global
+    agents add acme/base --scope global --agent codex --agent claude-code
+    agents install --scope global
+
+The same package may be installed to both scopes:
+
+    agents add acme/base --scope project
+    agents add acme/base --scope global --agent codex
+
+No command without an explicit global scope may write to user-level agent
+directories. Global package state is user-specific and must not be inferred
+from a project's `agents.yaml`.
+
 ### Add package directly from Git
 
 The public index is optional:
@@ -502,6 +608,13 @@ GitHub account or credential system.
 public index when the manifest and lockfile contain explicit source
 references.
 
+For global state:
+
+    agents install --scope global
+
+This reads the user's global manifest and global lockfile, then resolves each
+logical target to the appropriate agent-specific directory.
+
 ### Update packages
 
     agents outdated
@@ -516,7 +629,9 @@ request. Unsafe local modifications stop the update.
     agents remove official/nextjs
 
 Agents removes only files owned exclusively by the package, after checking
-for local changes. It updates both project state files.
+for local changes. It updates the state file for the selected scope. Example:
+
+    agents remove acme/base --scope global
 
 ## 10. CLI
 
@@ -530,6 +645,7 @@ Initial commands:
     agents outdated
     agents diff
     agents list
+    agents targets
     agents search
     agents info
     agents check
@@ -543,12 +659,38 @@ Potential later commands:
     agents pin
     agents clean
 
+Scope options:
+
+    --scope project
+    --scope global
+    --global              # shorthand for --scope global
+
+`--scope` may be repeated when one package should be installed in both
+scopes; each scope still updates its own manifest and lockfile. The default
+scope is `project`. Agent filters such as `--agent codex --agent
+claude-code` apply to global targets.
+
+### `agents targets`
+
+Shows supported agent adapters and their resolved project/global roots. This
+is the diagnostic command for confirming where a package will write files:
+
+    agents targets
+    agents targets --agent codex
+    agents targets --scope global
+
 ### `agents init`
 
-Creates:
+Without a scope flag, creates project state:
 
     agents.yaml
     agents.lock
+
+With `--global`, creates user state in the platform-specific Agents
+configuration directory:
+
+    global.yaml
+    global.lock
 
 Project detection may suggest packages, but must not install anything
 silently.
@@ -562,15 +704,23 @@ Examples:
     agents add https://github.com/acme/agents.git#packages/base
     agents add ./agent-packages/base
     agents add official/nextjs --dry-run
+    agents add acme/base --scope global --agent codex
+    agents add acme/base --scope global --agent claude-code --agent codex
 
 The command resolves, validates, plans, and installs package files. It must
-show conflicts before writing files.
+show conflicts before writing files. Global scope installs only package
+targets declared for the selected agents.
 
 ### `agents install`
 
-Reads `agents.yaml` and `agents.lock`, fetches locked Git commits, and
-restores the declared files. If no lockfile exists, it resolves selectors and
-creates one.
+For project scope, reads `agents.yaml` and `agents.lock`, fetches locked
+Git commits, and restores project targets. If no lockfile exists, it resolves
+selectors and creates one.
+
+For global scope, reads `global.yaml` and `global.lock`, then restores only
+global targets:
+
+    agents install --scope global
 
 ### `agents update`
 
@@ -582,6 +732,7 @@ Useful options:
     agents update --dry-run
     agents update --interactive
     agents update official/nextjs --force
+    agents update --scope global
 
 `--force` is an explicit destructive choice and must clearly warn that local
 changes may be overwritten.
@@ -593,18 +744,20 @@ incoming source commit:
 
     agents diff
     agents diff official/nextjs
+    agents diff --scope global
 
 ### `agents check`
 
 Checks that:
 
-- `agents.lock` matches `agents.yaml`
+- the selected lockfile matches the selected manifest
 - locked package commits are available and valid
 - installed files match lockfile hashes
 - no managed file is unexpectedly missing
 - package ownership is unambiguous
 
     agents check --frozen
+    agents check --scope global
 
 ## 11. Project manifest
 
@@ -617,6 +770,7 @@ Suggested `agents.yaml`:
 
     packages:
       - id: official/nextjs
+        scope: project
         source:
           type: git
           url: https://github.com/example/agent-files.git
@@ -624,6 +778,7 @@ Suggested `agents.yaml`:
         selector: main
 
       - id: acme/base
+        scope: project
         source:
           type: git
           url: git@github.com:acme/agent-standards.git
@@ -634,11 +789,38 @@ The source descriptor is written into the manifest after index resolution.
 This makes future installation independent of a live registry.
 
 Short references are allowed as CLI input. The on-disk manifest should favour
-explicit Git source information.
+explicit Git source information. A package entry may also include an
+`agents` list when `scope: global`:
+
+    version: 1
+
+    packages:
+      - id: acme/base
+        scope: global
+        agents:
+          - claude-code
+          - codex
+        source:
+          type: git
+          url: git@github.com:acme/agent-standards.git
+          path: base
+        selector: v2.1.0
+
+For a global package entry, omitted `agents` means all compatible global
+targets declared by the package. An explicit `agents` list filters those
+targets. Unknown or unavailable agent adapters must produce a clear error,
+not a write to a guessed path.
+
+Project state and global state use separate manifests. The default global
+manifest is `global.yaml` in the platform-specific Agents configuration
+directory. A user may place that directory in a Git-managed dotfiles
+repository.
 
 ## 12. Lockfile
 
-`agents.lock` is deterministic and suitable for committing to Git.
+`agents.lock` is the deterministic project lockfile and is suitable for
+committing to Git. `global.lock` has the same format for user-global state
+and is stored beside `global.yaml`.
 
     version: 1
 
@@ -648,6 +830,7 @@ explicit Git source information.
 
     packages:
       official/nextjs:
+        scope: project
         source:
           type: git
           url: https://github.com/example/agent-files.git
@@ -656,18 +839,54 @@ explicit Git source information.
         commit: 89abcdef0123456789abcdef0123456789abcdef
         manifestSha256: sha256:...
         files:
-          AGENTS.md:
+          - scope: project
+            path: AGENTS.md
             sha256: sha256:...
-          CLAUDE.md:
+          - scope: project
+            path: CLAUDE.md
             sha256: sha256:...
-          .cursor/rules/nextjs.mdc:
+          - scope: project
+            path: .cursor/rules/nextjs.mdc
+            sha256: sha256:...
+
+Global lock (`global.lock`) uses the same schema:
+
+    version: 1
+
+    index:
+      url: https://github.com/example/agents-index.git
+      commit: 0123456789abcdef0123456789abcdef01234567
+
+    packages:
+      acme/base:
+        scope: global
+        agents:
+          - codex
+          - claude-code
+        source:
+          type: git
+          url: git@github.com:acme/agent-standards.git
+          path: base
+        requested: v2.1.0
+        commit: 0123456789abcdef0123456789abcdef01234567
+        manifestSha256: sha256:...
+        files:
+          - scope: global
+            agent: codex
+            path: AGENTS.md
+            sha256: sha256:...
+          - scope: global
+            agent: claude-code
+            path: CLAUDE.md
             sha256: sha256:...
 
 The full Git commit is the primary immutable package version. Tags and
 releases are human-friendly selectors that must resolve to commits.
 
 The index commit is recorded when an index resolved a short package name. It
-is not needed to install an already explicit source and locked commit.
+is not needed to install an already explicit source and locked commit. Lock
+entries store logical target paths and adapter identifiers, never absolute
+home-directory paths.
 
 ## 13. Resolution, cache, and transactions
 
@@ -685,6 +904,9 @@ High-level install algorithm:
     read agent.yaml at that commit
           |
           v
+    select project/global targets and agent adapters
+          |
+          v
     validate paths and package files
           |
           v
@@ -699,6 +921,10 @@ High-level install algorithm:
           v
     write files, manifest, and lockfile
 
+Project writes are relative to the consuming repository root. Global writes
+are relative to a built-in or explicitly configured agent target root. The
+package cannot choose that root.
+
 The operation should be transactional where practical. A failed install must
 not leave half a package installed.
 
@@ -712,8 +938,16 @@ for project correctness.
 
 ## 14. File ownership and conflicts
 
-The lockfile records every managed path and its owning package. V1 rejects
-ambiguous ownership.
+The lockfile records every managed target and its owning package. Ownership
+key is the selected scope, agent target, and relative destination path.
+
+Project and global files with the same filename are different targets and do
+not conflict:
+
+    project / CLAUDE.md
+    global / claude-code / CLAUDE.md
+
+V1 rejects ambiguous ownership within the same target.
 
 Example conflict:
 
@@ -729,6 +963,8 @@ Both packages install the same path.
 
 Agents must stop rather than silently overwrite. Future versions may support
 explicit precedence, fragments, composition, or generated aggregate files.
+Agent-native precedence between global and project files remains the
+responsibility of the target agent; Agents does not merge those files.
 
 When removing a package:
 
@@ -738,11 +974,14 @@ When removing a package:
 
 ## 15. Local modifications and updates
 
-For each managed file, Agents compares:
+For each managed target, Agents compares:
 
 - the previous package hash
-- the current local file hash
+- the current installed file hash
 - the incoming package hash
+
+The target record includes scope, agent, and relative destination path. The
+same protection applies to files in global agent directories.
 
 Required behavior:
 
@@ -781,9 +1020,9 @@ Installation therefore:
 - treats all package files as reviewable content
 - locks dependencies to Git commits
 - displays source URLs and package paths
-- validates every path before writing
-- rejects paths escaping the project root
-- rejects absolute paths
+- validates every target before writing
+- rejects paths escaping the active scope root
+- rejects package-supplied absolute paths
 - rejects `..` traversal
 - rejects platform-specific absolute paths such as `C:\Users\...`
 - inspects symlinks to prevent traversal
@@ -791,7 +1030,12 @@ Installation therefore:
 - rejects unsupported manifest schemas
 - stages writes before committing them
 
-No package file may install outside the consuming repository.
+For project scope, the active scope root is the consuming repository. For
+global scope, it is the selected agent's registered global root. A package
+cannot choose an arbitrary global root or write to another user's files.
+
+Global writes require an explicit `--scope global` or `--global` flag and
+must use the same local-modification protection as project writes.
 
 The index validator applies the same package validation before accepting an
 entry.
@@ -852,6 +1096,7 @@ deployed with GitHub Pages or equivalent static hosting. It may show:
 - source previews linked to GitHub
 - latest observed source commit
 - supported coding agents inferred from files
+- supported scopes: project, global, or both
 - GitHub-derived stars or contributors as optional signals
 
 The site must not become a second package store. Package content remains in
@@ -937,6 +1182,11 @@ This provides:
 - self-contained repositories
 - recovery if the CLI or public index disappears
 
+Global instruction files should also be committed where practical, typically
+through the user's Git-managed dotfiles repository. Agents materializes them
+at native global agent paths but keeps package provenance and update state in
+`global.yaml` and `global.lock`; it does not rely on a hidden central copy.
+
 An organisation can automate updates by:
 
 1. detecting a new source commit
@@ -958,6 +1208,7 @@ An organisation can automate updates by:
      +-- Resolver
      +-- Package parser and validator
      +-- Dependency/manifest manager
+     +-- Scope and agent-target adapters
      +-- Installer and transaction planner
      +-- Lockfile manager
      +-- Ownership and collision checker
@@ -1003,9 +1254,14 @@ Project files:
     agents.yaml
     agents.lock
 
+Global Agents state:
+
+    <agents-config-dir>/global.yaml
+    <agents-config-dir>/global.lock
+
 Global configuration:
 
-    ~/.config/agents/config.toml
+    <agents-config-dir>/config.toml
 
 Example:
 
@@ -1013,6 +1269,39 @@ Example:
 
     [git]
     github_shorthand = true
+
+### Target adapter contract
+
+Each supported agent has an adapter with:
+
+- stable agent identifier, such as `claude-code`, `codex`, `cursor`, or
+  `github-copilot`
+- project target rules
+- global root resolution for Linux, macOS, and Windows
+- supported global instruction/configuration paths
+- agent-native precedence information
+- adapter schema/version
+
+Adapters resolve logical package targets to actual paths. For example, a
+package can declare `global / codex / AGENTS.md` without knowing the user's
+home directory or operating system. Adapter changes must be versioned and
+recorded in the relevant lockfile.
+
+The CLI ships target adapters for supported agents, including Claude Code,
+Codex, Cursor, GitHub Copilot, and Gemini CLI. Each adapter defines the
+platform-specific project and global roots expected by that agent. Adapter
+names and logical paths are stable; physical home-directory paths are
+resolved at runtime.
+
+Users may configure additional adapters or override a root:
+
+    [targets.my-agent]
+    project_root = ".my-agent"
+    global_root = "~/.my-agent"
+
+Package manifests may select logical targets but may not supply arbitrary
+absolute destination roots. Adapter identity/version should be recorded in
+global lockfiles when it affects a resolved path.
 
 Users should be able to configure multiple public or private index
 repositories. Index precedence and duplicate IDs must be explicit and
@@ -1038,14 +1327,18 @@ The first usable version must support:
 
 - `agents.yaml`
 - `agents.lock`
+- separate global manifest and lockfile
 
 ### Commands
 
     agents init
+    agents init --global
     agents add
     agents install
+    agents install --global
     agents remove
     agents list
+    agents targets
     agents diff
     agents update
 
@@ -1057,6 +1350,10 @@ The first usable version must support:
 - collision detection
 - local modification protection
 - safe path validation
+- project and global installation scopes
+- target adapters for supported agents
+- explicit global writes with `--scope global` or `--global`
+- separate ownership and lock state per scope
 - no package scripts
 - transactional installation where practical
 - operation without the public index after resolution
@@ -1131,6 +1428,17 @@ The following must also work:
 
 without silently overwriting or deleting locally modified files.
 
+Global installation must also work independently:
+
+    agents init --global
+    agents add github:example/agent-packages#base --scope global --agent codex
+    agents install --scope global
+
+This must write only to the configured Codex global target, record the
+resolved source commit in `global.lock`, and leave project files and
+`agents.lock` unchanged. A later global update or removal must protect
+locally modified global files.
+
 The public discovery path must additionally work from Git alone:
 
 1. a package source repository contains a valid package
@@ -1161,15 +1469,17 @@ The conceptual comparison is:
 1. Git is the source of truth for package content.
 2. GitHub/Git is the source of truth for registry indexing.
 3. Installed instructions remain visible in the consuming repository.
-4. Any declared file format can be managed.
-5. No arbitrary package code is executed.
-6. Updates are ordinary, inspectable Git changes.
-7. Package versions are reproducible full Git commits.
-8. Private Git repositories work naturally.
-9. The public index is optional infrastructure.
-10. Index metadata never replaces source package content.
-11. The system is agent-neutral.
-12. Simple file installation comes before clever composition.
-13. Local changes are never silently destroyed.
-14. A project remains usable if Agents or its public index disappears.
-15. Every durable registry state has a reviewable Git representation.
+4. Project and global scopes are first-class and separately managed.
+5. Global writes are explicit, target-aware, and platform-safe.
+6. Any declared file format can be managed.
+7. No arbitrary package code is executed.
+8. Updates are ordinary, inspectable Git changes.
+9. Package versions are reproducible full Git commits.
+10. Private Git repositories work naturally.
+11. The public index is optional infrastructure.
+12. Index metadata never replaces source package content.
+13. The system is agent-neutral.
+14. Simple file installation comes before clever composition.
+15. Local changes are never silently destroyed.
+16. A project remains usable if Agents or its public index disappears.
+17. Every durable registry state has a reviewable Git representation.
