@@ -337,4 +337,4 @@ Do not implement a hosted registry, web dashboard, automatic background updater,
   nested outputs, pack expansion/omissions, global Claude/Codex destinations, adoption,
   migration, immutable dirty-source reads, update/diff/outdated, and offline checks.
 - Implementation commits pushed to `origin/main`: `55afc9c`, `356fe27`, `3dd7ef1`,
-  `5877bff`, `78346ee`, `60df6cf`, `886da84`, and `92d3718`.
+  `5877bff`, `78346ee`, `60df6cf`, `886da84`, `92d3718`, and `4581b94`.
