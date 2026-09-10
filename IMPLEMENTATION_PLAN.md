@@ -328,5 +328,13 @@ Do not implement a hosted registry, web dashboard, automatic background updater,
 
 ## Progress
 
-- Planning complete. Implementation has not started.
-- Next: Phase 1, after reading current repository instructions and checking for intervening changes.
+- Phases 1–7 implemented. v2 packages, packs, immutable Git/cache reads, pure composition,
+  transactional recovery, project/global commands, migration, examples/docs, and static
+  detection are complete. Schema 1 remains isolated behind its legacy path and narrow
+  migration reader; schema 2 has no pre-v2 destination compatibility requirement.
+- Verified with `npm run check` (9 passing tests), `git diff --check`, and
+  `npm pack --dry-run --json`. Built-executable walkthroughs covered direct mixed stacks,
+  nested outputs, pack expansion/omissions, global Claude/Codex destinations, adoption,
+  migration, immutable dirty-source reads, update/diff/outdated, and offline checks.
+- Implementation commits pushed to `origin/main`: `55afc9c`, `356fe27`, `3dd7ef1`,
+  `5877bff`, `78346ee`, and `60df6cf`.

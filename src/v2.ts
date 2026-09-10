@@ -196,7 +196,7 @@ async function readBytes(path: string): Promise<Buffer | undefined> {
   }
 }
 
-async function managedExpectedHash(path: string, previous: string | undefined): Promise<string | undefined> {
+async function managedExpectedHash(path: string, previous: string | undefined): Promise<string | null | undefined> {
   if (previous === undefined) return undefined;
   return (await fileHash(path)) === null ? null : previous;
 }
