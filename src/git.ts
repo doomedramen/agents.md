@@ -19,6 +19,10 @@ async function git(args: string[], cwd: string): Promise<string> {
   }
 }
 
+export async function gitRevision(cwd: string): Promise<string> {
+  return git(["rev-parse", "HEAD"], cwd);
+}
+
 function splitRemoteReference(reference: string): { url: string; packagePath: string } {
   const hashIndex = reference.indexOf("#");
   if (hashIndex === -1) {
@@ -52,7 +56,7 @@ export async function resolvePackage(reference: string, cwd: string): Promise<Re
   if (existsSync(localCandidate)) {
     const root = resolve(localCandidate);
     const { manifest, bytes } = await readPackageManifest(root);
-    const commit = await git(["rev-parse", "HEAD"], root);
+    const commit = await gitRevision(root);
     const source: SourceDescriptor = { type: "git", url: root, path: "." };
     return { root, source, commit, manifest, manifestBytes: bytes };
   }
@@ -69,6 +73,64 @@ export async function resolvePackage(reference: string, cwd: string): Promise<Re
     const { manifest, bytes } = await readPackageManifest(root);
     const commit = await git(["rev-parse", "HEAD"], cloneRoot);
     const source: SourceDescriptor = { type: "git", url: remote.url, path: remote.packagePath };
+    return {
+      root,
+      source,
+      commit,
+      manifest,
+      manifestBytes: bytes,
+      cleanup: async () => rm(cloneRoot, { recursive: true, force: true }),
+    };
+  } catch (error) {
+    await rm(cloneRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+export async function resolvePackageAt(
+  source: SourceDescriptor,
+  commit: string,
+): Promise<ResolvedPackage> {
+  if (existsSync(source.url)) {
+    const sourceRoot = resolve(source.url, source.path);
+    const currentCommit = await gitRevision(sourceRoot);
+    if (currentCommit === commit) {
+      const { manifest, bytes } = await readPackageManifest(sourceRoot);
+      return { root: sourceRoot, source, commit, manifest, manifestBytes: bytes };
+    }
+
+    const worktreeParent = await mkdtemp(join(tmpdir(), "agents-md-worktree-"));
+    const worktreeRoot = join(worktreeParent, "package");
+    try {
+      await git(["worktree", "add", "--detach", "--quiet", worktreeRoot, commit], source.url);
+      const root = resolve(worktreeRoot, source.path);
+      const { manifest, bytes } = await readPackageManifest(root);
+      return {
+        root,
+        source,
+        commit,
+        manifest,
+        manifestBytes: bytes,
+        cleanup: async () => {
+          try {
+            await git(["worktree", "remove", "--force", "--quiet", worktreeRoot], source.url);
+          } finally {
+            await rm(worktreeParent, { recursive: true, force: true });
+          }
+        },
+      };
+    } catch (error) {
+      await rm(worktreeParent, { recursive: true, force: true });
+      throw error;
+    }
+  }
+
+  const cloneRoot = await mkdtemp(join(tmpdir(), "agents-md-locked-"));
+  try {
+    await git(["clone", "--quiet", source.url, cloneRoot], process.cwd());
+    await git(["checkout", "--detach", "--quiet", commit], cloneRoot);
+    const root = resolve(cloneRoot, source.path);
+    const { manifest, bytes } = await readPackageManifest(root);
     return {
       root,
       source,

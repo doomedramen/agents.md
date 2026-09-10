@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 
 import { resolve } from "node:path";
-import { addPackage, initProject } from "./install.js";
+import { addPackage, initProject, installPackages } from "./install.js";
 
 function usage(): string {
   return `Usage: agents.md <command> [arguments]
 
-Commands:
-  init                 Create project state files
-  add <source>         Add a Git-backed agent package
+  Commands:
+    init                 Create project state files
+    add <source>         Add a Git-backed agent package
+    install              Restore all declared project and global targets
 `;
 }
 
@@ -31,6 +32,11 @@ async function main(argv: string[]): Promise<void> {
       for (const file of result.files) {
         console.log(`  ${file}`);
       }
+      return;
+    }
+    case "install": {
+      const files = await installPackages(resolve(projectRoot));
+      console.log(`Installed ${files.length} file${files.length === 1 ? "" : "s"}`);
       return;
     }
     case undefined:

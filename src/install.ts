@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { stringify, parse } from "yaml";
 import { destinationForTarget, configDirectory } from "./paths.js";
-import { resolvePackage } from "./git.js";
+import { resolvePackage, resolvePackageAt } from "./git.js";
 import { targetKey, targetsForScope } from "./manifest.js";
 import type {
   LockFile,
@@ -199,6 +199,36 @@ export async function initProject(projectRoot: string): Promise<void> {
   const lock = await readYaml<LockFile>(paths.lock, emptyLock());
   await writeYaml(paths.state, state);
   await writeYaml(paths.lock, lock);
+}
+
+async function installLockedScope(scope: Scope, projectRoot: string): Promise<string[]> {
+  const paths = statePaths(scope, projectRoot);
+  const state = await readYaml<StateFile>(paths.state, emptyState());
+  const lock = await readYaml<LockFile>(paths.lock, emptyLock());
+  const files: string[] = [];
+
+  for (const reference of state.packages) {
+    const locked = lock.packages[reference.id];
+    if (!locked) {
+      throw new Error(`Lockfile is missing package: ${reference.id}`);
+    }
+    const resolved = await resolvePackageAt(locked.source, locked.commit);
+    try {
+      files.push(
+        ...(await installScope(resolved, reference.id, locked.requested, scope, projectRoot)),
+      );
+    } finally {
+      await resolved.cleanup?.();
+    }
+  }
+  return files;
+}
+
+export async function installPackages(projectRoot: string): Promise<string[]> {
+  return [
+    ...(await installLockedScope("project", projectRoot)),
+    ...(await installLockedScope("global", projectRoot)),
+  ];
 }
 
 export function declaredScopes(resolved: ResolvedPackage): Scope[] {

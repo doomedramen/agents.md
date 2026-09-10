@@ -91,6 +91,25 @@ files:
     assert.equal(projectManifest.packages.length, 1);
     assert.equal(globalManifest.packages.length, 1);
     assert.equal(globalLock.packages["shared-rules"].scope, "global");
+
+    await rm(join(projectRoot, "AGENTS.md"));
+    await rm(join(projectRoot, "CLAUDE.md"));
+    await rm(join(homeRoot, ".codex", "AGENTS.md"));
+
+    await runCli(["install"], projectRoot, {
+      AGENTS_CONFIG_DIR: configRoot,
+      AGENTS_TEST_HOME: homeRoot,
+    });
+
+    assert.equal(
+      await readFile(join(projectRoot, "AGENTS.md"), "utf8"),
+      "# Shared rules\n\nUse TypeScript.\n",
+    );
+    assert.equal(await readFile(join(projectRoot, "CLAUDE.md"), "utf8"), "@AGENTS.md\n");
+    assert.equal(
+      await readFile(join(homeRoot, ".codex", "AGENTS.md"), "utf8"),
+      "# Shared rules\n\nUse TypeScript.\n",
+    );
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }
