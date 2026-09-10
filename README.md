@@ -14,16 +14,17 @@ review upstream changes:
 
 ```sh
 npx @doomedramen/agents.md init
-npx @doomedramen/agents.md add github:community/agent-rules#packages/typescript
-npx @doomedramen/agents.md add github:community/agent-rules#packages/express
+npx @doomedramen/agents.md add github:doomedramen/agent-packages#packages/project-typescript --ref main
 npx @doomedramen/agents.md edit
 npx @doomedramen/agents.md diff --update
 npx @doomedramen/agents.md update
 npx @doomedramen/agents.md check
 ```
 
-The repository names above are walkthrough placeholders: replace them with
-Git sources you have reviewed. A local source uses an explicit path, for
+The package is public and reviewable in the
+[`doomedramen/agent-packages`](https://github.com/doomedramen/agent-packages)
+repository. Pin `main` only for a walkthrough; use a reviewed tag or commit
+for a production configuration. A local source uses an explicit path, for
 example `./examples/packages/typescript`; GitHub shorthand is not a local
 path. The equivalent executable invocation is `agents.md ...`.
 
@@ -39,13 +40,14 @@ review the consumer configuration and lockfile through Git:
 
 ```sh
 agents.md init
-agents.md add github:your-team/agent-rules#packs/default
+agents.md add github:doomedramen/agent-packages#packs/typescript-project --ref main
 agents.md edit
 agents.md check
 ```
 
-`your-team/agent-rules` is a placeholder, not a hosted service supplied by
-this project. A company baseline is optional. If CI must verify it, include the
+The public pack is a working baseline, not a hosted registry or special
+service. Fork `agent-packages` or publish an ordinary Git repository when a
+team needs its own reviewed rules. If CI must verify a convention, include the
 required package or pack in committed `agents.yaml`; global guidance cannot
 provide a repository guarantee.
 
@@ -56,17 +58,27 @@ guidance:
 
 ```sh
 agents.md init
-agents.md add github:community/agent-rules#packages/turborepo
-agents.md add github:community/agent-rules#packages/nextjs --dir apps/web
-agents.md add github:community/agent-rules#packages/hono --dir apps/api
-agents.md edit --dir apps/web
-agents.md edit --dir apps/api
+agents.md add github:doomedramen/agent-packages#packs/typescript-monorepo --ref main
 agents.md check
 ```
 
-This produces root, `apps/web`, and `apps/api` outputs. Root selections are not
-copied into nested outputs by default. Native agent loading decides which files
-are visible; agents.md does not claim universal precedence.
+This produces root and `apps/web` outputs. Root selections are not copied into
+nested outputs by default. Native agent loading decides which files are
+visible; agents.md does not claim universal precedence.
+
+## Real public examples
+
+The runnable source packages, pack recipes, and committed consumer fixtures
+live in [`doomedramen/agent-packages`](https://github.com/doomedramen/agent-packages):
+
+- [direct project example](https://github.com/doomedramen/agent-packages/tree/main/examples/direct-project)
+- [TypeScript monorepo example](https://github.com/doomedramen/agent-packages/tree/main/examples/typescript-monorepo)
+- [schema 2 packages](https://github.com/doomedramen/agent-packages/tree/main/packages)
+- [schema 2 packs](https://github.com/doomedramen/agent-packages/tree/main/packs)
+
+Each fixture commits its `agents.yaml`, `agents.lock`, generated instructions,
+and local inputs. Run `agents.md check` from the fixture directory to verify
+the committed state.
 
 ## Configuration
 
@@ -134,8 +146,8 @@ removing the pack preserves the direct contribution.
 Global scope uses one composition and separate personal `local.md`:
 
 ```sh
-agents.md add github:your-team/agent-rules#packs/default --global --dry-run
-agents.md add github:your-team/agent-rules#packs/default --global
+agents.md add github:doomedramen/agent-packages#packages/global-baseline --ref main --global --dry-run
+agents.md add github:doomedramen/agent-packages#packages/global-baseline --ref main --global
 agents.md edit --global
 agents.md check --global
 agents.md outdated --global

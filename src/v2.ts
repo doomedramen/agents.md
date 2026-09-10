@@ -243,7 +243,30 @@ function selectionFingerprint(config: ConsumerConfigV2): string {
 }
 
 function canonicalConfigHash(config: ConsumerConfigV2): string {
-  return sha256(stringify(config));
+  return sha256(stringify({
+    version: config.version,
+    packages: config.packages.map(({ id, source, ref, compatibility }) => ({
+      id,
+      source,
+      ref: ref ?? null,
+      compatibility: compatibility ?? null,
+    })),
+    packs: config.packs.map(({ id, source, ref, directory, omitOutputs }) => ({
+      id,
+      source,
+      ref: ref ?? null,
+      directory,
+      omitOutputs: [...omitOutputs],
+    })),
+    outputs: config.outputs.map(({ directory, use, exclude, local, adapters }) => ({
+      directory,
+      use: [...use],
+      exclude: [...exclude],
+      local: [...local],
+      adapters: adapters === undefined ? null : [...adapters],
+    })),
+    agents: config.agents === undefined ? null : [...config.agents],
+  }));
 }
 
 function packageSelectionById(config: ConsumerConfigV2): Map<string, V2PackageSelection> {

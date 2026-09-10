@@ -83,6 +83,29 @@ test("v2 composes stable output, excludes fragments, and keeps nested output iso
   }
 });
 
+test("v2 pack installs remain checkable after config parsing", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "agents-md-pack-check-"));
+  try {
+    const source = await gitRepo(join(fixture, "source"), {
+      "packages/one/agent.yaml": packageManifest("one", "rules.md", "One"),
+      "packages/one/rules.md": "# One\n\nKeep one concern per module.\n",
+      "packages/two/agent.yaml": packageManifest("two", "rules.md", "Two"),
+      "packages/two/rules.md": "# Two\n\nKeep transport thin.\n",
+      "packs/stack/agents.yaml": "version: 2\nkind: pack\nname: stack\npackages:\n  - id: one\n    source: ../../packages/one\n  - id: two\n    source: ../../packages/two\noutputs:\n  - directory: .\n    use: [one, two]\n    exclude: []\n",
+    });
+    const consumer = join(fixture, "consumer");
+    await mkdir(consumer, { recursive: true });
+    const env = { AGENTS_CONFIG_DIR: join(fixture, "config"), AGENTS_TEST_HOME: join(fixture, "home") };
+    await runCli(["init"], consumer, env);
+    await runCli(["add", `file://${source.root}#packs/stack`, "--ref", "main"], consumer, env);
+    await runCli(["check"], consumer, env);
+    assert.match(await readFile(join(consumer, "AGENTS.md"), "utf8"), /stack\/one\/main/);
+    assert.match(await readFile(join(consumer, "AGENTS.md"), "utf8"), /stack\/two\/main/);
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
 test("v2 locks immutable bytes and update sees a new commit", async () => {
   const fixture = await mkdtemp(join(tmpdir(), "agents-md-lock-"));
   try {
