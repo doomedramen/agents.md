@@ -193,14 +193,6 @@ export async function addPackage(reference: string, projectRoot: string): Promis
   }
 }
 
-export async function initProject(projectRoot: string): Promise<void> {
-  const paths = statePaths("project", projectRoot);
-  const state = await readYaml<StateFile>(paths.state, emptyState());
-  const lock = await readYaml<LockFile>(paths.lock, emptyLock());
-  await writeYaml(paths.state, state);
-  await writeYaml(paths.lock, lock);
-}
-
 async function installLockedScope(scope: Scope, projectRoot: string): Promise<string[]> {
   const paths = statePaths(scope, projectRoot);
   const state = await readYaml<StateFile>(paths.state, emptyState());

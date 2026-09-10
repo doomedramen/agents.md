@@ -1,15 +1,14 @@
 #!/usr/bin/env node
 
 import { resolve } from "node:path";
-import { addPackage, initProject, installPackages } from "./install.js";
+import { addPackage, installPackages } from "./install.js";
 
 function usage(): string {
   return `Usage: agents.md <command> [arguments]
 
-  Commands:
-    init                 Create project state files
-    add <source>         Add a Git-backed agent package
-    install              Restore all declared project and global targets
+Commands:
+  add <source>         Add a Git-backed agent package
+  install              Restore all declared project and global targets
 `;
 }
 
@@ -18,10 +17,6 @@ async function main(argv: string[]): Promise<void> {
   const projectRoot = process.cwd();
 
   switch (command) {
-    case "init":
-      await initProject(projectRoot);
-      console.log("Initialized agents.yaml and agents.lock");
-      return;
     case "add": {
       const reference = args[0];
       if (!reference) {

@@ -651,7 +651,6 @@ Agents:
 Global state is separate from project state, but the package manifest decides
 which state it uses:
 
-    npx agents.md init
     npx agents.md add @acme/agent-standards
     npx agents.md install
 
@@ -720,7 +719,6 @@ in Git repositories.
 
 Initial commands:
 
-    npx agents.md init
     npx agents.md add
     npx agents.md install
     npx agents.md remove
@@ -756,22 +754,6 @@ write files:
 
     npx agents.md targets
     npx agents.md targets --agent codex
-
-### `agents init`
-
-Creates project state:
-
-    agents.yaml
-    agents.lock
-
-When a package declares global targets, the CLI creates user state lazily in
-the platform-specific Agents configuration directory:
-
-    global.yaml
-    global.lock
-
-Project detection may suggest packages, but must not install anything
-silently.
 
 ### `agents add`
 
@@ -1436,7 +1418,6 @@ The first usable version must support:
 
 ### Commands
 
-    npx agents.md init
     npx agents.md add
     npx agents.md install
     npx agents.md remove
@@ -1504,7 +1485,6 @@ The first milestone is complete when this works:
     git init demo
     cd demo
 
-    npx agents.md init
     npx agents.md add github:example/agent-packages#nextjs
 
 and produces:
@@ -1536,7 +1516,6 @@ without silently overwriting or deleting locally modified files.
 
 Global installation must also work independently:
 
-    npx agents.md init
     npx agents.md add github:example/agent-packages#base
     npx agents.md install
 
