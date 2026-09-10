@@ -728,7 +728,7 @@ Installation therefore:
 - rejects paths escaping the project root
 - rejects absolute paths
 - rejects `..` traversal
-- rejects platform-specific absolute paths such as `C:\\Users\\...`
+- rejects platform-specific absolute paths such as `C:\Users\...`
 - inspects symlinks to prevent traversal
 - rejects duplicate file declarations
 - rejects unsupported manifest schemas
