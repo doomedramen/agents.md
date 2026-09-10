@@ -1,6 +1,6 @@
 {
   "name": "@doomedramen/agents.md",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Git-native package manager for AI coding-agent instructions",
   "type": "module",
   "bin": {
