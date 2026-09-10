@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { stringify, parse } from "yaml";
 import { destinationForTarget, configDirectory } from "./paths.js";
 import { resolvePackage } from "./git.js";
-import { targetKey, targetsForScope } from "./manifest.js";
+import { targetsForScope } from "./manifest.js";
 import type {
   LockFile,
   LockPackage,
@@ -64,7 +64,7 @@ function updateState(state: StateFile, reference: PackageReference): StateFile {
   return { ...state, version: 1, packages };
 }
 
-function renderTarget(target: PackageTarget, source: Buffer, manifest: ResolvedPackage["manifest"]): Buffer {
+function renderTarget(target: PackageTarget, source: Buffer): Buffer {
   if (target.mode === "import") {
     if (target.agent !== "claude-code") {
       throw new Error(`No import renderer is available for agent: ${target.agent ?? "shared"}`);
@@ -92,12 +92,23 @@ async function planWrites(
     const source = await readFile(join(resolved.root, file.source));
     for (const target of file.targets.filter((candidate) => candidate.scope === scope)) {
       const destination = destinationForTarget(target, projectRoot);
-      const key = targetKey(target) + `\0${destination}`;
-      if (seen.has(key)) {
-        throw new Error(`Package resolves duplicate target: ${target.path}`);
+      if (seen.has(destination)) {
+        throw new Error(`Package resolves duplicate target path: ${target.path}`);
       }
-      seen.add(key);
-      planned.push({ destination, contents: renderTarget(target, source, resolved.manifest), target });
+      seen.add(destination);
+      planned.push({ destination, contents: renderTarget(target, source), target });
+    }
+  }
+
+  for (const write of planned) {
+    try {
+      if ((await lstat(write.destination)).isSymbolicLink()) {
+        throw new Error(`Refusing symlink target: ${write.destination}`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
     }
   }
 

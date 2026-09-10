@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -95,6 +95,14 @@ files:
     assert.equal(projectManifest.packages.length, 1);
     assert.equal(globalManifest.packages.length, 1);
     assert.equal(globalLock.packages["shared-rules"].scope, "global");
+
+    await assert.rejects(
+      runCli(["add", packageRoot, "--scope", "global"], projectRoot, {
+        AGENTS_CONFIG_DIR: configRoot,
+        AGENTS_TEST_HOME: homeRoot,
+      }),
+      /scope is declared by agent\.yaml/,
+    );
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }
@@ -109,8 +117,10 @@ test("add accepts a remote Git source", async () => {
   try {
     await mkdir(packageRoot, { recursive: true });
     await mkdir(projectRoot, { recursive: true });
+    const nestedPackageRoot = join(packageRoot, "packages", "remote");
+    await mkdir(nestedPackageRoot, { recursive: true });
     await writeFile(
-      join(packageRoot, "agent.yaml"),
+      join(nestedPackageRoot, "agent.yaml"),
       `schema: 1
 name: remote-rules
 description: Rules from a remote Git repository
@@ -118,16 +128,16 @@ files:
   - AGENTS.md
 `,
     );
-    await writeFile(join(packageRoot, "AGENTS.md"), "# Remote rules\n");
+    await writeFile(join(nestedPackageRoot, "AGENTS.md"), "# Remote rules\n");
 
     await run("git", ["init", "-b", "main"], packageRoot);
     await run("git", ["config", "user.email", "test@example.com"], packageRoot);
     await run("git", ["config", "user.name", "Agents Test"], packageRoot);
-    await run("git", ["add", "agent.yaml", "AGENTS.md"], packageRoot);
+    await run("git", ["add", "packages/remote/agent.yaml", "packages/remote/AGENTS.md"], packageRoot);
     await run("git", ["commit", "-m", "fixture"], packageRoot);
     await run("git", ["clone", "--bare", packageRoot, bareRoot], fixtureRoot);
 
-    await runCli(["add", `file://${bareRoot}`], projectRoot, {
+    await runCli(["add", `file://${bareRoot}#packages/remote`], projectRoot, {
       AGENTS_CONFIG_DIR: join(fixtureRoot, "config"),
       AGENTS_TEST_HOME: join(fixtureRoot, "home"),
     });
@@ -137,6 +147,115 @@ files:
     const locked = lock.packages["remote-rules"];
     assert.equal(locked.source.url, `file://${bareRoot}`);
     assert.match(locked.commit, /^[0-9a-f]{40}$/);
+
+    const gitConfig = join(fixtureRoot, "gitconfig");
+    await run(
+      "git",
+      [
+        "config",
+        "--file",
+        gitConfig,
+        `url.file://${bareRoot}.insteadOf`,
+        "https://github.com/acme/agents-nextjs.git",
+      ],
+      fixtureRoot,
+    );
+    await runCli(["add", "@acme/agents-nextjs#packages/remote"], projectRoot, {
+      AGENTS_CONFIG_DIR: join(fixtureRoot, "config"),
+      AGENTS_TEST_HOME: join(fixtureRoot, "home"),
+      GIT_CONFIG_GLOBAL: gitConfig,
+    });
+
+    const githubLock = parse(await readFile(join(projectRoot, "agents.lock"), "utf8"));
+    assert.equal(githubLock.packages["acme/agents-nextjs"].source.url, "https://github.com/acme/agents-nextjs.git");
+    assert.equal(githubLock.packages["acme/agents-nextjs"].source.path, "packages/remote");
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("add rejects package targets that resolve to one physical file", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "agents-md-duplicate-"));
+  const packageRoot = join(fixtureRoot, "source");
+  const projectRoot = join(fixtureRoot, "consumer");
+
+  try {
+    await mkdir(packageRoot, { recursive: true });
+    await mkdir(projectRoot, { recursive: true });
+    await writeFile(
+      join(packageRoot, "agent.yaml"),
+      `schema: 1
+name: duplicate-rules
+description: Invalid duplicate targets
+files:
+  - source: first.md
+    targets:
+      - scope: project
+        path: AGENTS.md
+  - source: second.md
+    targets:
+      - scope: project
+        agent: codex
+        path: AGENTS.md
+`,
+    );
+    await writeFile(join(packageRoot, "first.md"), "first\n");
+    await writeFile(join(packageRoot, "second.md"), "second\n");
+
+    await run("git", ["init", "-b", "main"], packageRoot);
+    await run("git", ["config", "user.email", "test@example.com"], packageRoot);
+    await run("git", ["config", "user.name", "Agents Test"], packageRoot);
+    await run("git", ["add", "agent.yaml", "first.md", "second.md"], packageRoot);
+    await run("git", ["commit", "-m", "fixture"], packageRoot);
+
+    await assert.rejects(
+      runCli(["add", packageRoot], projectRoot, {
+        AGENTS_CONFIG_DIR: join(fixtureRoot, "config"),
+        AGENTS_TEST_HOME: join(fixtureRoot, "home"),
+      }),
+      /duplicate target path/,
+    );
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("add refuses to follow a target symlink", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "agents-md-symlink-"));
+  const packageRoot = join(fixtureRoot, "source");
+  const projectRoot = join(fixtureRoot, "consumer");
+  const outsidePath = join(fixtureRoot, "outside.md");
+
+  try {
+    await mkdir(packageRoot, { recursive: true });
+    await mkdir(projectRoot, { recursive: true });
+    await writeFile(
+      join(packageRoot, "agent.yaml"),
+      `schema: 1
+name: symlink-rules
+description: Symlink safety fixture
+files:
+  - AGENTS.md
+`,
+    );
+    await writeFile(join(packageRoot, "AGENTS.md"), "replacement\n");
+    await writeFile(outsidePath, "must remain unchanged\n");
+    await symlink(outsidePath, join(projectRoot, "AGENTS.md"));
+
+    await run("git", ["init", "-b", "main"], packageRoot);
+    await run("git", ["config", "user.email", "test@example.com"], packageRoot);
+    await run("git", ["config", "user.name", "Agents Test"], packageRoot);
+    await run("git", ["add", "agent.yaml", "AGENTS.md"], packageRoot);
+    await run("git", ["commit", "-m", "fixture"], packageRoot);
+
+    await assert.rejects(
+      runCli(["add", packageRoot], projectRoot, {
+        AGENTS_CONFIG_DIR: join(fixtureRoot, "config"),
+        AGENTS_TEST_HOME: join(fixtureRoot, "home"),
+      }),
+      /symlink target/,
+    );
+    assert.equal(await readFile(outsidePath, "utf8"), "must remain unchanged\n");
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }

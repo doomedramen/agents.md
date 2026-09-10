@@ -21,6 +21,9 @@ async function main(argv: string[]): Promise<void> {
       if (!reference) {
         throw new Error("add requires a package source\n\n" + usage());
       }
+      if (args.length > 1) {
+        throw new Error("add accepts one source; scope is declared by agent.yaml");
+      }
       const result = await addPackage(reference, resolve(projectRoot));
       console.log(`Added ${result.id} at ${result.commit}`);
       for (const file of result.files) {
