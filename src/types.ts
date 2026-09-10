@@ -161,6 +161,7 @@ export interface V2FragmentLock {
 
 export interface V2PackageLock {
   id: string;
+  requestedSource?: string;
   source: SourceDescriptor;
   requestedRef: string | null;
   commit: string;
@@ -171,6 +172,7 @@ export interface V2PackageLock {
 
 export interface V2PackMemberLock {
   id: string;
+  requestedSource?: string;
   source: SourceDescriptor;
   requestedRef: string | null;
   commit: string;
@@ -190,6 +192,7 @@ export interface V2PackOutputLock {
 export interface V2PackLock {
   id: string;
   directory: string;
+  requestedSource?: string;
   source: SourceDescriptor;
   requestedRef: string | null;
   commit: string;

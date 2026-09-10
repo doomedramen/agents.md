@@ -94,7 +94,11 @@ async function localSource(reference: string, cwd: string): Promise<{ source: So
 }
 
 export async function parseGitSource(reference: string, cwd: string, requireExplicitLocal = false): Promise<{ source: SourceDescriptor; repositoryRoot?: string }> {
-  if (isExplicitLocalSource(splitSourceReference(reference).source)) {
+  const sourcePart = splitSourceReference(reference).source;
+  if (isAbsolute(sourcePart) && requireExplicitLocal) {
+    throw new Error(`Local Git sources must start with ./ or ../: ${reference}`);
+  }
+  if (isExplicitLocalSource(sourcePart)) {
     return localSource(reference, cwd);
   }
   const remote = remoteReference(reference);
@@ -165,9 +169,13 @@ async function cloneCommitToCache(source: SourceDescriptor, commit: string, dest
     await git(["fetch", "--quiet", "origin", commit], stage, true);
     await git(["checkout", "--detach", "--quiet", commit], stage);
     if (await validCache(destination, commit)) return;
-    await rename(stage, destination);
+    try {
+      await rename(stage, destination);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST" && await validCache(destination, commit)) return;
+      throw error;
+    }
   } catch (error) {
-    await rm(destination, { recursive: true, force: true });
     throw error;
   } finally {
     await rm(stageParent, { recursive: true, force: true });
@@ -194,8 +202,9 @@ async function currentSnapshot(
   reference: string,
   cwd: string,
   requestedRef?: string,
+  requireExplicitLocal = true,
 ): Promise<ResolvedV2Source> {
-  const parsed = await parseGitSource(reference, cwd, true);
+  const parsed = await parseGitSource(reference, cwd, requireExplicitLocal);
   const source = parsed.source;
   let repositoryRoot: string;
   let commit: string;
@@ -225,8 +234,9 @@ export async function resolveV2Source(
   reference: string,
   cwd: string,
   requestedRef?: string,
+  requireExplicitLocal = true,
 ): Promise<ResolvedV2Source> {
-  return currentSnapshot(reference, cwd, requestedRef);
+  return currentSnapshot(reference, cwd, requestedRef, requireExplicitLocal);
 }
 
 export async function resolveV2SourceAt(
@@ -246,7 +256,7 @@ export async function resolveV2SourceAt(
 }
 
 export async function resolvePackage(reference: string, cwd: string): Promise<ResolvedPackage> {
-  const resolved = await currentSnapshot(reference, cwd);
+  const resolved = await currentSnapshot(reference, cwd, undefined, false);
   const { manifest, bytes } = await readPackageManifest(resolved.root);
   return { root: resolved.root, source: resolved.source, commit: resolved.commit, manifest, manifestBytes: bytes };
 }

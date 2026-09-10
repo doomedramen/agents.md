@@ -81,6 +81,7 @@ interface LoadedFragment {
 
 interface LoadedPackage {
   id: string;
+  requestedSource?: string;
   source: SourceDescriptor;
   commit: string;
   manifest: PackageManifest;
@@ -126,6 +127,12 @@ interface ScopeRenderOptions extends V2CommandOptions {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function checkFailure(message: string): Error {
+  const error = new Error(message);
+  error.name = "CheckFailure";
+  return error;
 }
 
 function scopePaths(options: V2CommandOptions): ScopePaths {
@@ -195,6 +202,9 @@ async function readConfig(paths: ScopePaths, global: boolean): Promise<ConsumerC
 async function readLock(paths: ScopePaths): Promise<V2LockFile> {
   const value = parse(await readFile(paths.lockPath, "utf8")) as unknown;
   if (!isRecord(value) || value.version !== 2) throw new Error(`${paths.lockPath}: lock version must be 2`);
+  if (typeof value.rendererVersion !== "string" || typeof value.configSha256 !== "string" || !isRecord(value.packages) || !isRecord(value.packs) || !isRecord(value.localFiles) || !isRecord(value.generatedFiles) || !isRecord(value.ownership) || !isRecord(value.outputs)) {
+    throw new Error(`${paths.lockPath}: malformed version 2 lock`);
+  }
   return value as unknown as V2LockFile;
 }
 
@@ -230,6 +240,7 @@ function packSelectionById(config: ConsumerConfigV2): Map<string, V2PackSelectio
 function packageLockFor(loaded: LoadedPackage): V2PackageLock {
   return {
     id: loaded.id,
+    ...(loaded.requestedSource ? { requestedSource: loaded.requestedSource } : {}),
     source: loaded.source,
     requestedRef: loaded.requestedRef,
     commit: loaded.commit,
@@ -252,6 +263,7 @@ function packLockFor(loaded: LoadedPack): V2PackLock {
   return {
     id: loaded.id,
     directory: loaded.selection.directory,
+    requestedSource: loaded.selection.source,
     source: loaded.source,
     requestedRef: loaded.selection.ref ?? null,
     commit: loaded.commit,
@@ -288,6 +300,7 @@ async function loadPackageFromRoot(
   requestedRef: string | null,
   expected?: V2PackageLock | V2PackMemberLock,
   compatibility?: "v1-canonical",
+  requestedSource?: string,
 ): Promise<LoadedPackage> {
   const document = await readSourceDocument(root);
   if (document.kind !== "package") throw new Error(`Expected package at ${sourceReference(source)}, found pack`);
@@ -310,6 +323,7 @@ async function loadPackageFromRoot(
   if (expected && expected.fragments.length !== fragments.length) throw new Error(`Locked fragment list changed for ${id}`);
   return {
     id,
+    ...(requestedSource ? { requestedSource } : {}),
     source,
     commit,
     manifest: document.manifest,
@@ -345,6 +359,7 @@ async function resolvePack(
   mode: "locked" | "current",
   oldLock: V2PackLock | undefined,
   offline: boolean,
+  global = false,
 ): Promise<LoadedPack> {
   let resolved;
   if (mode === "locked") {
@@ -355,6 +370,9 @@ async function resolvePack(
   }
   const document = await readResolvedSource(resolved);
   if (document.kind !== "pack") throw new Error(`Source ${selection.id} is not a pack`);
+  if (global && document.manifest.outputs.some((output) => output.directory !== ".")) {
+    throw new Error(`Global scope rejects pack ${selection.id} with nested outputs`);
+  }
   const manifestHash = sha256(document.bytes);
   if (mode === "locked" && oldLock && oldLock.manifestSha256 !== manifestHash) throw new Error(`Locked pack recipe changed: ${selection.id}`);
   const recipe: LoadedPackWithRoot = {
@@ -373,6 +391,10 @@ async function resolvePack(
   };
   const oldMembers = new Map((oldLock?.members ?? []).map((member) => [member.id, member]));
   const memberIds = new Set(recipe.manifest.packages.map((member) => member.id));
+  const recipeDirectories = new Set(recipe.outputs.map((output) => output.directory));
+  for (const omitted of selection.omitOutputs) {
+    if (!recipeDirectories.has(omitted)) throw new Error(`Unknown omitted pack output in ${selection.id}: ${omitted}`);
+  }
   for (const output of recipe.outputs) {
     for (const excluded of output.exclude) {
       const [memberId, fragmentId, ...rest] = excluded.split("/");
@@ -405,9 +427,20 @@ async function resolvePack(
       memberResolved.root,
       requestedRef ?? null,
       expected,
+      undefined,
+      member.source,
     );
     recipe.members.set(member.id, loaded);
     recipe.memberLocks.push(memberLockFor(loaded, recipe));
+  }
+  for (const output of recipe.outputs) {
+    for (const excluded of output.exclude) {
+      const [memberId, fragmentId] = excluded.split("/");
+      const member = recipe.members.get(memberId);
+      if (!member?.fragments.some((fragment) => fragment.id === fragmentId)) {
+        throw new Error(`Unknown pack exclusion in ${selection.id}/${output.directory}: ${excluded}`);
+      }
+    }
   }
   return recipe;
 }
@@ -424,21 +457,25 @@ async function loadLockedState(options: ScopeRenderOptions): Promise<LoadedState
   for (const selection of config.packages) {
     const locked = lock.packages[selection.id];
     if (!locked) throw new Error(`Lock is missing package: ${selection.id}`);
-    const parsed = await parseGitSource(selection.source, options.projectRoot, true);
-    if (sourceIdentity(parsed.source) !== sourceIdentity(locked.source) || (selection.ref ?? null) !== locked.requestedRef) {
+    const sourceChanged = locked.requestedSource !== undefined
+      ? locked.requestedSource !== selection.source
+      : sourceIdentity((await parseGitSource(selection.source, options.projectRoot, true)).source) !== sourceIdentity(locked.source);
+    if (sourceChanged || (selection.ref ?? null) !== locked.requestedRef) {
       throw new Error(`Package source/ref changed for ${selection.id}; run update`);
     }
     const resolved = await resolveV2SourceAt(locked.source, locked.commit, Boolean(options.offline));
-    packages.set(selection.id, await loadPackageFromRoot(selection.id, locked.source, locked.commit, resolved.root, locked.requestedRef, locked, locked.compatibility));
+    packages.set(selection.id, await loadPackageFromRoot(selection.id, locked.source, locked.commit, resolved.root, locked.requestedRef, locked, locked.compatibility, selection.source));
   }
   for (const selection of config.packs) {
     const locked = lock.packs[selection.id];
     if (!locked) throw new Error(`Lock is missing pack: ${selection.id}`);
-    const parsed = await parseGitSource(selection.source, options.projectRoot, true);
-    if (sourceIdentity(parsed.source) !== sourceIdentity(locked.source) || (selection.ref ?? null) !== locked.requestedRef || selection.directory !== locked.directory) {
+    const sourceChanged = locked.requestedSource !== undefined
+      ? locked.requestedSource !== selection.source
+      : sourceIdentity((await parseGitSource(selection.source, options.projectRoot, true)).source) !== sourceIdentity(locked.source);
+    if (sourceChanged || (selection.ref ?? null) !== locked.requestedRef || selection.directory !== locked.directory) {
       throw new Error(`Pack source/ref changed for ${selection.id}; run update`);
     }
-    packs.set(selection.id, await resolvePack(selection, options.projectRoot, "locked", locked, Boolean(options.offline)));
+    packs.set(selection.id, await resolvePack(selection, options.projectRoot, "locked", locked, Boolean(options.offline), Boolean(options.global)));
   }
   return { config, lock, packages, packs };
 }
@@ -510,8 +547,25 @@ function packOutputFor(pack: LoadedPack, output: V2OutputConfig): PackManifest["
   return matches[0];
 }
 
+function assertSharedSourceRevisions(state: LoadedState): void {
+  const revisions = new Map<string, { commit: string; requestedRef: string | null; label: string }>();
+  const add = (source: SourceDescriptor, commit: string, requestedRef: string | null, label: string): void => {
+    const identity = sourceIdentity(source);
+    const previous = revisions.get(identity);
+    if (previous && (previous.commit !== commit || previous.requestedRef !== requestedRef)) {
+      throw new Error(`Conflicting revisions for shared source ${identity} (${previous.label} vs ${label})`);
+    }
+    revisions.set(identity, { commit, requestedRef, label });
+  };
+  for (const [id, loaded] of state.packages) add(loaded.source, loaded.commit, loaded.requestedRef, id);
+  for (const [packId, pack] of state.packs) {
+    for (const member of pack.members.values()) add(member.source, member.commit, member.requestedRef, `${packId}/${member.id}`);
+  }
+}
+
 async function renderState(state: LoadedState, options: ScopeRenderOptions): Promise<RenderedState> {
   const paths = scopePaths(options);
+  assertSharedSourceRevisions(state);
   const generated = new Map<string, { contents: Buffer; owners: string[]; kind: "agents" | "adapter" }>();
   const localHashes: Record<string, string> = {};
   const outputLocks: Record<string, V2OutputLock> = {};
@@ -529,6 +583,9 @@ async function renderState(state: LoadedState, options: ScopeRenderOptions): Pro
       const pack = state.packs.get(alias);
       if (!pack) throw new Error(`Output ${output.directory} references unknown alias: ${alias}`);
       const recipeOutput = packOutputFor(pack, output);
+      if (pack.selection.omitOutputs.includes(recipeOutput.directory)) {
+        throw new Error(`Pack output ${pack.id}/${recipeOutput.directory} is both selected and omitted in ${output.directory}`);
+      }
       for (const recipeExcluded of recipeOutput.exclude) {
         const [memberId, fragmentId] = recipeExcluded.split("/");
         excludes.add(`${pack.id}/${memberId}/${fragmentId}`);
@@ -590,12 +647,12 @@ async function loadCurrentPackage(selection: V2PackageSelection, projectRoot: st
   const document = await readResolvedSource(resolved);
   if (document.kind !== "package") throw new Error(`Source ${selection.id} is a pack; use pack selection`);
   if (document.manifest.schema !== 2 && !selection.compatibility) throw new Error(`Schema 1 package ${selection.id} requires migrate before v2 installation`);
-  return loadPackageFromRoot(selection.id, resolved.source, resolved.commit, resolved.root, selection.ref ?? null, undefined, selection.compatibility);
+  return loadPackageFromRoot(selection.id, resolved.source, resolved.commit, resolved.root, selection.ref ?? null, undefined, selection.compatibility, selection.source);
 }
 
 async function loadLockedPackage(selection: V2PackageSelection, locked: V2PackageLock, offline: boolean): Promise<LoadedPackage> {
   const resolved = await resolveV2SourceAt(locked.source, locked.commit, offline);
-  return loadPackageFromRoot(selection.id, locked.source, locked.commit, resolved.root, locked.requestedRef, locked, locked.compatibility);
+  return loadPackageFromRoot(selection.id, locked.source, locked.commit, resolved.root, locked.requestedRef, locked, locked.compatibility, selection.source);
 }
 
 async function loadStateForSelections(
@@ -618,9 +675,9 @@ async function loadStateForSelections(
   for (const selection of config.packs) {
     const locked = oldLock.packs[selection.id];
     if (selectedPacks.has(selection.id) || !locked) {
-      packs.set(selection.id, await resolvePack(selection, options.projectRoot, "current", locked, Boolean(options.offline)));
+      packs.set(selection.id, await resolvePack(selection, options.projectRoot, "current", locked, Boolean(options.offline), Boolean(options.global)));
     } else {
-      packs.set(selection.id, await resolvePack(selection, options.projectRoot, "locked", locked, Boolean(options.offline)));
+      packs.set(selection.id, await resolvePack(selection, options.projectRoot, "locked", locked, Boolean(options.offline), Boolean(options.global)));
     }
   }
   return { config, lock: oldLock, packages, packs };
@@ -659,6 +716,43 @@ function addUnique(values: string[], value: string): void {
   if (!values.includes(value)) values.push(value);
 }
 
+async function prepareImplicitInitialization(options: AddV2Options): Promise<{ config: ConsumerConfigV2; lock: V2LockFile; localCreates: Map<string, Buffer> }> {
+  const paths = scopePaths(options);
+  await assertNoLegacyScope(options);
+  const legacy = legacyPaths(options);
+  if (await fileExists(legacy.state)) throw new Error("Legacy state exists; run agents.md migrate or use init --adopt after review");
+  if (await fileExists(paths.lockPath)) throw new Error(`Refusing orphan lockfile: ${paths.lockPath}`);
+  if (options.agents !== undefined && (!options.global || options.agents.length === 0 || options.agents.some((agent) => !registeredAgents().includes(agent)))) {
+    throw new Error(`Unknown or invalid global agent selection; registered agents: ${registeredAgents().join(", ")}`);
+  }
+  const config = emptyConfig(Boolean(options.global), options.agents);
+  if (await fileExists(paths.localPath)) throw new Error(`Refusing pre-existing local destination: ${paths.localPath}`);
+  const lock = emptyLock();
+  if (!options.global) {
+    const canonical = await existingCanonical(join(options.projectRoot, "AGENTS.md"));
+    if (canonical !== undefined) throw new Error(`Existing AGENTS.md requires init --adopt: ${join(options.projectRoot, "AGENTS.md")}`);
+    const claude = await existingCanonical(join(options.projectRoot, "CLAUDE.md"));
+    if (claude !== undefined && !claude.equals(renderClaudeAdapter())) {
+      throw new Error("Existing custom CLAUDE.md must be reconciled before adding v2 guidance");
+    }
+    if (claude !== undefined) lock.generatedFiles["CLAUDE.md"] = { sha256: sha256(claude), owners: [], kind: "adapter" };
+  } else {
+    for (const agent of config.agents ?? ["claude-code"]) {
+      const canonical = await existingCanonical(globalCanonicalPath(agent));
+      if (canonical !== undefined) throw new Error("Existing global guidance requires init --global --adopt");
+      const adapter = globalAdapterPath(agent);
+      if (!adapter) continue;
+      const adapterBytes = await existingCanonical(adapter);
+      if (adapterBytes !== undefined && !adapterBytes.equals(renderClaudeAdapter())) {
+        throw new Error(`Existing custom Claude adapter must be reconciled: ${adapter}`);
+      }
+      if (adapterBytes !== undefined) lock.generatedFiles[`${agent}/CLAUDE.md`] = { sha256: sha256(adapterBytes), owners: [], kind: "adapter" };
+    }
+  }
+  const local = options.global ? "local.md" : ".agents/project.md";
+  return { config, lock, localCreates: new Map([[local, Buffer.alloc(0)]]) };
+}
+
 export interface AddV2Options extends ScopeRenderOptions {
   references: string[];
   ref?: string;
@@ -671,22 +765,20 @@ export interface AddV2Options extends ScopeRenderOptions {
 export async function addV2(options: AddV2Options): Promise<{ ids: string[]; commits: string[] }> {
   if (options.references.length === 0) throw new Error("add requires at least one source");
   if (options.id && options.references.length !== 1) throw new Error("--id applies only to one source");
-  if (options.global && options.directory && options.directory !== ".") throw new Error("--dir cannot select a nested output in global scope");
+  if (options.global && options.directory !== undefined) throw new Error("--dir cannot be combined with --global");
   const paths = scopePaths(options);
-  if (!(await fileExists(paths.configPath))) {
-    await initV2({ ...options, adopt: false, agents: options.agents, dryRun: Boolean(options.dryRun) });
-  }
   const configExists = await fileExists(paths.configPath);
-  const config = configExists ? await readConfig(paths, Boolean(options.global)) : emptyConfig(Boolean(options.global));
-  const oldLock = configExists ? await readLock(paths) : emptyLock();
+  if (configExists) await assertNoLegacyScope(options);
+  const initial = configExists ? undefined : await prepareImplicitInitialization(options);
+  const config = configExists ? await readConfig(paths, Boolean(options.global)) : initial!.config;
+  const oldLock = configExists ? await readLock(paths) : initial!.lock;
   const aliases = new Set([...config.packages, ...config.packs].map((selection) => selection.id));
   const nextConfig: ConsumerConfigV2 = JSON.parse(JSON.stringify(config)) as ConsumerConfigV2;
   const newPackages: V2PackageSelection[] = [];
   const newPacks: V2PackSelection[] = [];
   const selectedPackages = new Set<string>();
   const selectedPacks = new Set<string>();
-  const newPackValues = new Map<string, LoadedPack>();
-  const localCreates = new Map<string, Buffer>();
+  const localCreates = initial?.localCreates ?? new Map<string, Buffer>();
   const introducedBy: Record<string, string | undefined> = {};
   const directory = assertSafeDirectoryPath(options.directory ?? ".", "--dir");
   for (const [index, reference] of options.references.entries()) {
@@ -731,11 +823,10 @@ export async function addV2(options: AddV2Options): Promise<{ ids: string[]; com
         omitOutputs: [],
         ...(options.ref === undefined ? {} : { ref: options.ref }),
       };
-      const loaded = await resolvePack(selection, options.projectRoot, "current", undefined, false);
+      const loaded = await resolvePack(selection, options.projectRoot, "current", undefined, false, Boolean(options.global));
       newPacks.push(selection);
       nextConfig.packs.push(selection);
       selectedPacks.add(alias);
-      newPackValues.set(alias, loaded);
       for (const recipeOutput of loaded.outputs) {
         const targetDirectory = mountedOutputDirectory(directory, recipeOutput.directory);
         const outputInfo = ensureOutput(nextConfig, targetDirectory, Boolean(options.global), alias);
@@ -772,6 +863,7 @@ export async function addV2(options: AddV2Options): Promise<{ ids: string[]; com
 
 export async function removeV2(options: V2CommandOptions & { ids: string[]; dryRun?: boolean }): Promise<string[]> {
   if (options.ids.length === 0) throw new Error("remove requires at least one alias");
+  await assertNoLegacyScope(options);
   const paths = scopePaths(options);
   const config = await readConfig(paths, Boolean(options.global));
   const oldLock = await readLock(paths);
@@ -810,6 +902,7 @@ export async function removeV2(options: V2CommandOptions & { ids: string[]; dryR
 
 export async function renderV2(options: ScopeRenderOptions): Promise<void> {
   const paths = scopePaths(options);
+  await assertNoLegacyScope(options);
   await recoverTransaction(paths.journalPath);
   const lock = await readLock(paths);
   const state = await loadLockedState({ ...options, previousLock: lock });
@@ -820,23 +913,40 @@ export async function renderV2(options: ScopeRenderOptions): Promise<void> {
 
 export async function checkV2(options: V2CommandOptions): Promise<void> {
   const paths = scopePaths(options);
+  await assertNoLegacyScope(options);
   await recoverTransaction(paths.journalPath);
   const config = await readConfig(paths, Boolean(options.global));
   const lock = await readLock(paths);
   if (lock.rendererVersion !== RENDERER_VERSION) throw new Error(`Unsupported renderer version in lock: ${lock.rendererVersion}`);
-  if (lock.configSha256 !== canonicalConfigHash(config)) throw new Error("Configuration changed since last render; run agents.md render");
-  if (lock.selectionSha256 && lock.selectionSha256 !== selectionFingerprint(config)) throw new Error("Package or pack source/ref membership changed; run agents.md update");
+  if (lock.configSha256 !== canonicalConfigHash(config)) throw checkFailure("Configuration changed since last render; run agents.md render");
+  if (lock.selectionSha256 && lock.selectionSha256 !== selectionFingerprint(config)) throw checkFailure("Package or pack source/ref membership changed; run agents.md update");
   const rendered = await renderLoadedState({ ...options, previousLock: lock });
+  const expectedPackages = new Set(config.packages.map((selection) => selection.id));
+  const expectedPacks = new Set(config.packs.map((selection) => selection.id));
+  if (Object.keys(lock.packages).some((id) => !expectedPackages.has(id)) || Object.keys(lock.packs).some((id) => !expectedPacks.has(id))) {
+    throw checkFailure("Lock ownership differs from configuration; run agents.md render");
+  }
   for (const [local, expected] of Object.entries(lock.localFiles)) {
     const actual = await fileHash(localAbsolutePath(paths, options, local));
-    if (actual !== expected) throw new Error(`Local fragment drift detected: ${local}; run agents.md edit or render`);
+    if (actual !== expected) throw checkFailure(`Local fragment drift detected: ${local}; run agents.md edit or render`);
+  }
+  const renderedLocals = new Set(Object.values(rendered.outputLocks).flatMap((output) => output.local));
+  if (Object.keys(lock.localFiles).some((local) => !renderedLocals.has(local)) || [...renderedLocals].some((local) => lock.localFiles[local] === undefined)) {
+    throw checkFailure("Local input ownership differs from lock; run agents.md render");
   }
   const expectedGenerated = Object.keys(lock.generatedFiles).sort();
   const plannedGenerated = [...rendered.generated.keys()].sort();
-  if (JSON.stringify(expectedGenerated) !== JSON.stringify(plannedGenerated)) throw new Error("Generated file ownership differs from lock; run agents.md render");
+  if (JSON.stringify(expectedGenerated) !== JSON.stringify(plannedGenerated)) throw checkFailure("Generated file ownership differs from lock; run agents.md render");
   for (const [logical, generated] of rendered.generated) {
+    const locked = lock.generatedFiles[logical];
+    if (!locked || locked.sha256 !== sha256(generated.contents) || JSON.stringify(locked.owners) !== JSON.stringify(generated.owners) || JSON.stringify(lock.ownership[logical] ?? []) !== JSON.stringify(locked.owners)) {
+      throw checkFailure(`Generated ownership differs from lock: ${logical}; run agents.md render`);
+    }
     const actual = await fileHash(logicalDestination(options, logical));
-    if (actual !== sha256(generated.contents)) throw new Error(`Generated file drift detected: ${logical}; run agents.md render`);
+    if (actual !== sha256(generated.contents)) throw checkFailure(`Generated file drift detected: ${logical}; run agents.md render`);
+  }
+  if (JSON.stringify(lock.outputs) !== JSON.stringify(rendered.outputLocks)) {
+    throw checkFailure("Output ownership differs from lock; run agents.md render");
   }
 }
 
@@ -866,13 +976,17 @@ function oneHunkDiff(oldBody: Buffer | undefined, newBody: Buffer): string {
 
 async function plannedRenderedForDiff(options: ScopeRenderOptions, update: boolean): Promise<RenderedState> {
   const paths = scopePaths(options);
+  await assertNoLegacyScope(options);
   const config = await readConfig(paths, Boolean(options.global));
   const lock = await readLock(paths);
   if (!update) return renderLoadedState({ ...options, previousLock: lock });
+  const nextConfig = JSON.parse(JSON.stringify(config)) as ConsumerConfigV2;
   const selectedPackages = new Set(config.packages.map((selection) => selection.id));
   const selectedPacks = new Set(config.packs.map((selection) => selection.id));
-  const state = await loadStateForSelections(config, lock, options, selectedPackages, selectedPacks);
-  return renderState(state, { ...options, previousLock: lock });
+  const preliminary = await loadStateForSelections(nextConfig, lock, options, selectedPackages, selectedPacks);
+  const reconciliation = await reconcilePackOutputs(nextConfig, config, lock, preliminary.packs, options);
+  const state = await loadStateForSelections(nextConfig, lock, options, selectedPackages, selectedPacks);
+  return renderState(state, { ...options, previousLock: lock, localOverrides: reconciliation.localCreates, introducedBy: reconciliation.introducedBy });
 }
 
 export async function diffV2(options: ScopeRenderOptions & { update?: boolean }): Promise<void> {
@@ -886,6 +1000,12 @@ export async function diffV2(options: ScopeRenderOptions & { update?: boolean })
       console.log(`+++ ${logical} (planned)`);
       process.stdout.write(diff);
     }
+  }
+  for (const output of rendered.config.outputs) {
+    if (output.exclude.length > 0) console.log(`exclude ${output.directory}: ${output.exclude.join(", ")}`);
+  }
+  for (const pack of rendered.config.packs) {
+    if (pack.omitOutputs.length > 0) console.log(`omit ${pack.id}: ${pack.omitOutputs.join(", ")}`);
   }
   if (options.update) {
     for (const [id, packageValue] of rendered.packages) {
@@ -904,10 +1024,11 @@ export async function diffV2(options: ScopeRenderOptions & { update?: boolean })
 }
 
 function sourceMatchesLock(selection: V2PackageSelection | V2PackSelection, locked: V2PackageLock | V2PackLock, projectRoot: string): Promise<boolean> {
+  if (locked.requestedSource !== undefined && selection.source !== locked.requestedSource) return Promise.resolve(false);
   return parseGitSource(selection.source, projectRoot, true).then((parsed) =>
     sourceIdentity(parsed.source) === sourceIdentity(locked.source) &&
     (selection.ref ?? null) === locked.requestedRef &&
-    ("directory" in selection ? selection.directory === (locked as V2PackLock).directory : true),
+    ("directory" in selection ? selection.directory === (locked as V2PackLock).directory && JSON.stringify(selection.omitOutputs) === JSON.stringify((locked as V2PackLock).omitOutputs) : true),
   );
 }
 
@@ -950,6 +1071,9 @@ async function reconcilePackOutputs(
       }
       if (!output) continue;
       const previousUse = oldLock.outputs[targetDirectory]?.use.includes(packId) ?? oldConfig.outputs.find((candidate) => candidate.directory === targetDirectory)?.use.includes(packId) ?? false;
+      if (omitted && output.use.includes(packId)) {
+        throw new Error(`Pack output ${packId}/${recipeOutput.directory} is both selected and omitted in ${targetDirectory}`);
+      }
       if (previousUse && !output.use.includes(packId) && !selection.omitOutputs.includes(recipeOutput.directory)) {
         selection.omitOutputs.push(recipeOutput.directory);
       }
@@ -984,6 +1108,7 @@ async function reconcilePackOutputs(
 
 export async function updateV2(options: V2CommandOptions & { ids?: string[]; dryRun?: boolean }): Promise<void> {
   const paths = scopePaths(options);
+  await assertNoLegacyScope(options);
   const oldConfig = await readConfig(paths, Boolean(options.global));
   const oldLock = await readLock(paths);
   const requested = options.ids ?? [];
@@ -997,21 +1122,21 @@ export async function updateV2(options: V2CommandOptions & { ids?: string[]; dry
   const preliminary = await loadStateForSelections(nextConfig, oldLock, options, selectedPackages, selectedPacks);
   const reconciliation = await reconcilePackOutputs(nextConfig, oldConfig, oldLock, preliminary.packs, options);
   const state = await loadStateForSelections(nextConfig, oldLock, options, selectedPackages, selectedPacks);
-  const identities = new Map<string, { commit: string; selected: boolean; label: string }>();
+  const identities = new Map<string, { commit: string; requestedRef: string | null; label: string }>();
   for (const selection of nextConfig.packages) {
     const loaded = state.packages.get(selection.id);
     if (!loaded) continue;
     const identity = sourceIdentity(loaded.source);
     const previous = identities.get(identity);
-    if (previous && previous.commit !== loaded.commit) throw new Error(`Conflicting revisions for shared source ${identity}`);
-    identities.set(identity, { commit: loaded.commit, selected: selected.has(selection.id), label: selection.id });
+    if (previous && (previous.commit !== loaded.commit || previous.requestedRef !== loaded.requestedRef)) throw new Error(`Conflicting revisions for shared source ${identity}`);
+    identities.set(identity, { commit: loaded.commit, requestedRef: loaded.requestedRef, label: selection.id });
   }
   for (const [packId, pack] of state.packs) {
     for (const member of pack.members.values()) {
       const identity = sourceIdentity(member.source);
       const previous = identities.get(identity);
-      if (previous && previous.commit !== member.commit) throw new Error(`Conflicting revisions for shared source ${identity} (${previous.label} vs ${packId})`);
-      identities.set(identity, { commit: member.commit, selected: selected.has(packId), label: `${packId}/${member.id}` });
+      if (previous && (previous.commit !== member.commit || previous.requestedRef !== member.requestedRef)) throw new Error(`Conflicting revisions for shared source ${identity} (${previous.label} vs ${packId})`);
+      identities.set(identity, { commit: member.commit, requestedRef: member.requestedRef, label: `${packId}/${member.id}` });
     }
   }
   const rendered = await renderState(state, { ...options, previousLock: oldLock, localOverrides: reconciliation.localCreates, introducedBy: reconciliation.introducedBy });
@@ -1029,6 +1154,7 @@ export async function updateV2(options: V2CommandOptions & { ids?: string[]; dry
 
 export async function outdatedV2(options: V2CommandOptions): Promise<boolean> {
   const paths = scopePaths(options);
+  await assertNoLegacyScope(options);
   const config = await readConfig(paths, Boolean(options.global));
   const lock = await readLock(paths);
   let outdated = false;
@@ -1043,7 +1169,7 @@ export async function outdatedV2(options: V2CommandOptions): Promise<boolean> {
   }
   for (const selection of config.packs) {
     const old = lock.packs[selection.id];
-    const current = await resolvePack(selection, options.projectRoot, "current", old, false);
+    const current = await resolvePack(selection, options.projectRoot, "current", old, false, Boolean(options.global));
     if (current.commit !== old.commit) {
       console.log(`pack ${selection.id}: ${old.commit} ${current.commit}`);
       outdated = true;
@@ -1081,13 +1207,14 @@ async function runEditor(command: string, path: string): Promise<void> {
 
 export async function editV2(options: V2CommandOptions & { directory?: string }): Promise<{ path: string; edited: boolean }> {
   const paths = scopePaths(options);
+  await assertNoLegacyScope(options);
   const config = await readConfig(paths, Boolean(options.global));
   const directory = assertSafeDirectoryPath(options.directory ?? ".", "--dir");
   const output = config.outputs.find((candidate) => candidate.directory === directory);
   if (!output) throw new Error(`No configured output directory: ${directory}`);
   const local = output.local[0] ?? defaultLocal(directory, Boolean(options.global))[0];
   const absolute = localAbsolutePath(paths, options, local);
-  const editor = process.env.VISUAL ?? process.env.EDITOR;
+  const editor = process.env.VISUAL || process.env.EDITOR;
   if (!editor) {
     console.log(`Edit ${absolute}, then run agents.md render`);
     return { path: absolute, edited: false };
@@ -1333,14 +1460,14 @@ function emptyRendered(config: ConsumerConfigV2, global: boolean, localBody: Buf
       generated.set(`${agent}/AGENTS.md`, { contents: composed.body, owners: composed.fragmentOwners, kind: "agents" });
       outputLocks["."].generated.push(`${agent}/AGENTS.md`);
       if (agent === "claude-code") {
-        generated.set(`${agent}/CLAUDE.md`, { contents: renderClaudeAdapter(), owners: [], kind: "adapter" });
+        generated.set(`${agent}/CLAUDE.md`, { contents: renderClaudeAdapter(), owners: composed.fragmentOwners, kind: "adapter" });
         outputLocks["."].generated.push(`${agent}/CLAUDE.md`);
       }
     }
   } else {
     generated.set("AGENTS.md", { contents: composed.body, owners: composed.fragmentOwners, kind: "agents" });
     outputLocks["."].generated.push("AGENTS.md");
-    generated.set("CLAUDE.md", { contents: renderClaudeAdapter(), owners: [], kind: "adapter" });
+    generated.set("CLAUDE.md", { contents: renderClaudeAdapter(), owners: composed.fragmentOwners, kind: "adapter" });
     outputLocks["."].generated.push("CLAUDE.md");
   }
   return {
@@ -1357,6 +1484,9 @@ function emptyRendered(config: ConsumerConfigV2, global: boolean, localBody: Buf
 async function assertNoLegacyScope(options: V2CommandOptions): Promise<void> {
   const paths = scopePaths(options);
   const legacy = legacyPaths(options);
+  if (options.global && (await fileExists(legacy.state) || await fileExists(legacy.lock))) {
+    throw new Error("Legacy global state overlaps this v2 scope; migrate or remove it after review");
+  }
   if (await fileExists(paths.configPath)) {
     try {
       const value = parse(await readFile(paths.configPath, "utf8")) as unknown;
@@ -1390,10 +1520,10 @@ export async function initV2(options: V2CommandOptions & { adopt?: boolean; agen
   const legacy = legacyPaths(options);
   if (await fileExists(legacy.state)) throw new Error("Legacy state exists; run agents.md migrate or use init --adopt after review");
   if (await fileExists(paths.lockPath)) throw new Error(`Refusing orphan lockfile: ${paths.lockPath}`);
-  const config = emptyConfig(Boolean(options.global), options.agents);
-  if (options.global && options.agents?.some((agent) => !registeredAgents().includes(agent))) {
-    throw new Error(`Unknown global agent; registered agents: ${registeredAgents().join(", ")}`);
+  if (options.agents !== undefined && (!options.global || options.agents.length === 0 || options.agents.some((agent) => !registeredAgents().includes(agent)))) {
+    throw new Error(`Unknown or invalid global agent selection; registered agents: ${registeredAgents().join(", ")}`);
   }
+  const config = emptyConfig(Boolean(options.global), options.agents);
   const localDestination = paths.localPath;
   if (await fileExists(localDestination)) throw new Error(`Refusing pre-existing local destination: ${localDestination}`);
   const localCanonical = options.global ? undefined : await existingCanonical(join(options.projectRoot, "AGENTS.md"));

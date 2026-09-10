@@ -22,6 +22,8 @@ interface Journal {
   records: JournalRecord[];
 }
 
+const activeLocks = new Set<string>();
+
 export function sha256(value: Buffer | string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
@@ -41,6 +43,11 @@ async function ensureNoSymlinkAncestors(path: string, boundary: string): Promise
   const relation = relative(boundaryAbsolute, absolute);
   if (relation.startsWith("..") || isAbsolute(relation)) {
     throw new Error(`Path escapes allowed destination root: ${path}`);
+  }
+  try {
+    if ((await lstat(boundaryAbsolute)).isSymbolicLink()) throw new Error(`Refusing symlink ancestor: ${boundaryAbsolute}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   let current = dirname(absolute);
   while (true) {
@@ -68,6 +75,17 @@ async function currentHash(path: string): Promise<string | null> {
   }
 }
 
+function assertExpectedHash(write: TransactionWrite, actual: string | null): void {
+  if (write.expectedSha256 !== undefined && actual !== write.expectedSha256) {
+    const expected = write.expectedSha256 === null ? "absent" : write.expectedSha256;
+    throw new Error(`Destination changed before apply: ${write.path} (expected ${expected}, found ${actual ?? "absent"})`);
+  }
+  if (write.expectedSha256 === undefined && actual !== null && write.contents !== undefined) {
+    const planned = sha256(write.contents);
+    if (actual !== planned) throw new Error(`Refusing to overwrite unmanaged destination: ${write.path}`);
+  }
+}
+
 async function writeJournal(path: string, journal: Journal): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(journal, null, 2) + "\n", "utf8");
@@ -82,6 +100,7 @@ export async function recoverTransaction(journalPath: string): Promise<void> {
     throw new Error(`Recovery journal is unreadable: ${journalPath}: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (await exists(journal.lockPath)) {
+    if (activeLocks.has(journal.lockPath)) throw new Error(`Another agents.md operation is already running: ${journal.lockPath}`);
     try {
       const pid = Number.parseInt((await readFile(journal.lockPath, "utf8")).trim(), 10);
       if (Number.isInteger(pid) && pid !== process.pid) {
@@ -112,11 +131,13 @@ export async function recoverTransaction(journalPath: string): Promise<void> {
 }
 
 async function acquireLock(lockPath: string): Promise<void> {
+  if (activeLocks.has(lockPath)) throw new Error(`Another agents.md operation is already running: ${lockPath}`);
   await mkdir(dirname(lockPath), { recursive: true });
   try {
     const handle = await open(lockPath, "wx");
     await handle.writeFile(`${process.pid}\n`, "utf8");
     await handle.close();
+    activeLocks.add(lockPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") {
       throw new Error(`Another agents.md operation is already running: ${lockPath}`);
@@ -149,14 +170,7 @@ export async function applyTransaction(options: {
       if (!boundary) throw new Error(`Transaction destination is outside allowed roots: ${path}`);
       await ensureNoSymlinkAncestors(path, boundary);
       const actual = await currentHash(path);
-      if (write.expectedSha256 !== undefined && actual !== write.expectedSha256) {
-        const expected = write.expectedSha256 === null ? "absent" : write.expectedSha256;
-        throw new Error(`Destination changed before apply: ${path} (expected ${expected}, found ${actual ?? "absent"})`);
-      }
-      if (write.expectedSha256 === undefined && actual !== null && write.contents !== undefined) {
-        const planned = sha256(write.contents);
-        if (actual !== planned) throw new Error(`Refusing to overwrite unmanaged destination: ${path}`);
-      }
+      assertExpectedHash({ ...write, path }, actual);
     }
 
     const stageRoot = join(dirname(options.journalPath), `.transaction-${process.pid}-${Date.now()}`);
@@ -185,6 +199,8 @@ export async function applyTransaction(options: {
       for (let index = 0; index < options.writes.length; index += 1) {
         const write = options.writes[index];
         const path = resolve(write.path);
+        const actual = await currentHash(path);
+        assertExpectedHash({ ...write, path }, actual);
         await mkdir(dirname(path), { recursive: true });
         await ensureNoSymlinkAncestors(path, boundaries.find((candidate) => {
           const relation = relative(candidate, path);
@@ -202,6 +218,7 @@ export async function applyTransaction(options: {
       throw error;
     }
   } finally {
+    activeLocks.delete(options.lockPath);
     await rm(options.lockPath, { force: true });
   }
 }

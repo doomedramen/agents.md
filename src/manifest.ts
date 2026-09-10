@@ -200,12 +200,10 @@ function validateImportTargets(manifest: PackageManifestV1): void {
 }
 
 function parseV1(raw: Record<string, unknown>): PackageManifestV1 {
-  unknownFields(raw, new Set(["schema", "name", "description", "canonical", "files"]), "agent.yaml");
   const canonical = raw.canonical;
   let parsedCanonical: PackageManifestV1["canonical"];
   if (canonical !== undefined) {
     if (!isRecord(canonical)) throw new Error("agent.yaml: canonical must be an object");
-    unknownFields(canonical, new Set(["source"]), "agent.yaml: canonical");
     parsedCanonical = { source: assertSafeRelativePath(canonical.source, "agent.yaml: canonical.source") };
   }
   const manifest: PackageManifestV1 = {
@@ -512,8 +510,12 @@ export function parseConsumerConfigBytes(bytes: Buffer | string, global = false)
   if (!Array.isArray(agentsRaw) || agentsRaw.length === 0 || agentsRaw.some((value) => typeof value !== "string" || !knownAgents.has(value))) {
     throw new Error("agents.yaml: agents must contain registered agent names");
   }
+  if (global && (agentsRaw as string[]).some((value) => value !== "claude-code" && value !== "codex")) {
+    throw new Error("agents.yaml: global agents must be claude-code or codex");
+  }
   if (!global && raw.agents !== undefined) throw new Error("agents.yaml: agents is only valid for global scope");
   const outputs = raw.outputs.map((entry, index) => parseOutput(entry, index, global, aliases));
+  if (outputs.length === 0) throw new Error("agents.yaml: outputs must contain at least one output");
   const outputDirs = new Set<string>();
   for (const output of outputs) {
     const key = output.directory.toLowerCase();
@@ -531,6 +533,9 @@ export function parseConsumerConfigBytes(bytes: Buffer | string, global = false)
   }
   if (global && outputs.some((output) => output.directory !== ".")) {
     throw new Error("agents.yaml: global scope permits only output directory .");
+  }
+  if (global && (outputs.length !== 1 || outputs[0].local.length !== 1 || outputs[0].local[0] !== "local.md")) {
+    throw new Error("agents.yaml: global scope requires output . with local input local.md");
   }
   return {
     version: 2,

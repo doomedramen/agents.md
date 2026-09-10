@@ -138,8 +138,7 @@ export async function detectProject(root: string): Promise<string> {
   lines.push("Suggested packages:");
   if (technologies.length === 0) lines.push("- none");
   for (const technology of technologies) {
-    if (technology === "TypeScript") lines.push("- typescript: github:doomedramen/agent-packages#packages/project-typescript");
-    else lines.push(`- ${technology.toLowerCase().replaceAll(".", "").replaceAll(" ", "-")}: no configured Git source`);
+    lines.push(`- ${technology.toLowerCase().replaceAll(".", "").replaceAll(" ", "-")}: no configured Git source`);
   }
   if (result.errors.length > 0) {
     lines.push("Manifest warnings:");
@@ -147,4 +146,3 @@ export async function detectProject(root: string): Promise<string> {
   }
   return lines.join("\n");
 }
-

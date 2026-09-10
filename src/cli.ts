@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { parse } from "yaml";
 import { readFile } from "node:fs/promises";
 import { addPackage } from "./install.js";
@@ -35,7 +35,7 @@ Commands:
   remove <id>... [--global]
   render [--offline] [--global]
   diff [--update] [--global]
-  update [<id>...] [--global]
+  update [<id>...] [--global] [--offline] [--dry-run]
   outdated [--global]
   check [--offline] [--global]
   detect
@@ -141,7 +141,7 @@ async function v2ConfigExists(projectRoot: string, global: boolean): Promise<boo
 async function inspectSources(references: string[], projectRoot: string, ref?: string): Promise<Array<"v1" | "v2-package" | "v2-pack">> {
   const kinds: Array<"v1" | "v2-package" | "v2-pack"> = [];
   for (const reference of references) {
-    const resolved = await resolveV2Source(reference, projectRoot, ref);
+    const resolved = await resolveV2Source(reference, projectRoot, ref, isAbsolute(reference.split("#", 1)[0]) ? false : true);
     const document = await readResolvedSource(resolved);
     if (document.kind === "pack") kinds.push("v2-pack");
     else kinds.push(document.manifest.schema === 1 ? "v1" : "v2-package");
@@ -156,6 +156,7 @@ async function handleAdd(parsed: Parsed, projectRoot: string): Promise<void> {
   const id = parsed.values.get("id");
   const directory = parsed.values.get("dir");
   const agents = agentsValue(parsed);
+  if (global && directory !== undefined) throw new UsageError("--dir cannot be combined with --global");
   const alreadyV2 = await v2ConfigExists(projectRoot, global);
   if (global && agents && alreadyV2) throw new UsageError("--agents is accepted only while creating a global scope");
   const kinds = await inspectSources(parsed.positional, projectRoot, ref);
@@ -173,9 +174,6 @@ async function handleAdd(parsed: Parsed, projectRoot: string): Promise<void> {
       for (const file of result.files) console.log(`  ${file}`);
     }
     return;
-  }
-  if (global && !alreadyV2 && agents) {
-    await initV2({ projectRoot, global: true, agents, dryRun: hasFlag(parsed, "dry-run") });
   }
   const result = await addV2({
     projectRoot,
@@ -209,6 +207,7 @@ async function main(argv: string[]): Promise<void> {
     case "init":
       if (parsed.positional.length > 0) throw new UsageError("init accepts no positional arguments");
       if (hasFlag(parsed, "dir") || parsed.values.has("dir") || parsed.values.has("ref") || parsed.values.has("id")) throw new UsageError("init does not accept package selection options");
+      if (!hasFlag(parsed, "global") && parsed.values.has("agents")) throw new UsageError("--agents is only valid with --global");
       await initV2({ projectRoot, global: hasFlag(parsed, "global"), adopt: hasFlag(parsed, "adopt"), agents: agentsValue(parsed), dryRun: hasFlag(parsed, "dry-run") });
       return;
     case "add":
@@ -264,5 +263,5 @@ main(process.argv.slice(2)).catch((error: unknown) => {
     return;
   }
   console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = error instanceof UsageError ? 2 : 1;
+  process.exitCode = error instanceof UsageError || (error instanceof Error && error.name !== "CheckFailure") ? 2 : 1;
 });

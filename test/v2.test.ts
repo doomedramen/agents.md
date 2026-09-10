@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { test } from "node:test";
 import { parse } from "yaml";
 import { parseConsumerConfigBytes, parsePackageManifestBytes } from "../src/manifest.js";
+import { detectProjectData } from "../src/detect.js";
 
 const execFile = promisify(execFileCallback);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -114,3 +115,18 @@ test("v2 parser rejects unknown fields, duplicate aliases, unsafe paths, and unk
   assert.throws(() => parseConsumerConfigBytes(`version: 2\npackages: []\npacks: []\noutputs:\n- directory: ../escape\n  use: []\n  local: []\n`), /safe relative directory/);
 });
 
+test("detect reports static workspace evidence without executing or writing", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "agents-md-detect-"));
+  try {
+    await writeFile(join(fixture, "package.json"), JSON.stringify({ workspaces: ["packages/*"], devDependencies: { typescript: "^5" }, dependencies: { express: "^5" } }));
+    await mkdir(join(fixture, "packages", "api"), { recursive: true });
+    await writeFile(join(fixture, "packages", "api", "package.json"), JSON.stringify({ dependencies: { hono: "^4", mysql2: "^3" } }));
+    await writeFile(join(fixture, "tsconfig.json"), "{}\n");
+    const result = await detectProjectData(fixture);
+    assert.deepEqual([...new Set(result.evidence.map((item) => item.technology))].sort(), ["Express", "Hono", "MySQL", "TypeScript"].sort());
+    assert.equal(result.errors.length, 0);
+    await assert.rejects(readFile(join(fixture, "agents.yaml")));
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
