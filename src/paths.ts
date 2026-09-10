@@ -36,6 +36,26 @@ export function globalAgentRoot(agent: string): string {
   return join(userHome(), relativeRoot);
 }
 
+export function globalConfigDirectory(): string {
+  return join(configDirectory(), "global");
+}
+
+export function registeredAgents(): string[] {
+  return ["claude-code", "codex"];
+}
+
+export function globalCanonicalPath(agent: string): string {
+  if (agent === "claude-code" || agent === "codex") {
+    return join(globalAgentRoot(agent), "AGENTS.md");
+  }
+  throw new Error(`No canonical AGENTS.md destination is registered for agent: ${agent}`);
+}
+
+export function globalAdapterPath(agent: string): string | undefined {
+  if (agent === "claude-code") return join(globalAgentRoot(agent), "CLAUDE.md");
+  return undefined;
+}
+
 export function destinationForTarget(target: PackageTarget, projectRoot: string): string {
   const root = target.scope === "project" ? projectRoot : globalAgentRoot(target.agent!);
   return join(root, ...target.path.split("/"));
