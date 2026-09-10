@@ -1,21 +1,24 @@
 # agents.md
 
-Install versioned instructions for coding agents from Git.
+`agents.md` installs versioned coding-agent instructions from Git repositories.
+Package authors keep one canonical `AGENTS.md`, then declare each tool-specific
+destination in `agent.yaml`. The CLI records the source commit and installed file
+hashes in `agents.yaml` and `agents.lock`.
 
-`agents.md` keeps one canonical `AGENTS.md` in a Git repository and renders
-native adapters for tools such as Claude Code. Each package includes an
-`agent.yaml` file that declares its project and global targets. The CLI records
-the source commit and rendered file hashes in reviewable state files.
+## Requirements
 
-## Install
+- Node.js 20 or newer
+- Git
 
-You need Node.js 20 or newer and Git.
+## Install a package
+
+Run `add` from the repository that should receive the instructions:
 
 ```sh
-npx @doomedramen/agents.md add github:acme/agent-files#packages/nextjs
+npx @doomedramen/agents.md add github:doomedramen/agent-packages#packages/project-typescript
 ```
 
-The command accepts GitHub shorthands and Git URLs:
+The CLI accepts GitHub shorthand, HTTPS URLs, and SSH URLs:
 
 ```sh
 npx @doomedramen/agents.md add @acme/agent-files
@@ -24,75 +27,15 @@ npx @doomedramen/agents.md add https://github.com/acme/agent-files.git#packages/
 npx @doomedramen/agents.md add git@github.com:acme/agent-files.git
 ```
 
-`@owner/repo` names a GitHub source. The CLI fetches that repository as a Git
-checkout; it does not install an npm dependency.
+`@owner/repo` refers to a GitHub repository. The CLI checks out the repository;
+it does not install an npm dependency from that source.
 
-## Try the reference packages
+The package manifest controls installation scope. There are no `--project` or
+`--global` flags.
 
-The [reference package repository](https://github.com/doomedramen/agent-packages)
-contains installable examples for project and global instructions. Each package
-declares its scope in `agent.yaml`.
+## Package format
 
-### Project instructions
-
-Run this command from a Git repository:
-
-```sh
-npx @doomedramen/agents.md add github:doomedramen/agent-packages#packages/project-typescript
-```
-
-The package writes `AGENTS.md`, a Claude import adapter, `agents.yaml`, and
-`agents.lock` in the current repository.
-
-Open the package files:
-
-- [Project manifest](https://github.com/doomedramen/agent-packages/blob/main/packages/project-typescript/agent.yaml)
-- [Project instructions](https://github.com/doomedramen/agent-packages/blob/main/packages/project-typescript/AGENTS.md)
-
-### Global instructions
-
-Review the file before installing it. A global package changes the files that
-your agents read across projects.
-
-```sh
-npx @doomedramen/agents.md add github:doomedramen/agent-packages#packages/global-baseline
-```
-
-The package writes Codex guidance to `~/.codex/AGENTS.md`, Claude guidance to
-`~/.claude/AGENTS.md` and `~/.claude/CLAUDE.md`, and global state under the
-configured agents directory.
-
-Open the package files:
-
-- [Global manifest](https://github.com/doomedramen/agent-packages/blob/main/packages/global-baseline/agent.yaml)
-- [Global instructions](https://github.com/doomedramen/agent-packages/blob/main/packages/global-baseline/AGENTS.md)
-
-The package manifest sets the scope. The command has no `--global` or
-`--project` flag.
-
-## How targets work
-
-| Scope | Manifest fields | Example destination |
-| --- | --- | --- |
-| Project | `scope: project` | `./AGENTS.md` or `./CLAUDE.md` |
-| Global | `scope: global` and `agent` | `~/.codex/AGENTS.md` or `~/.claude/CLAUDE.md` |
-
-One package can declare targets in both scopes. `add` installs each declared
-target and updates the matching project or global state files.
-
-Keep instructions in one canonical file:
-
-```text
-AGENTS.md       canonical instructions
-CLAUDE.md       @AGENTS.md
-```
-
-Claude Code expands `@AGENTS.md`; Codex reads `AGENTS.md` directly. The
-adapter contains one import line, so the two tools share the same instructions.
-
-## Author a package
-
-Use this layout:
+Each package needs an `agent.yaml` manifest and at least one instruction file:
 
 ```text
 my-agent-package/
@@ -100,12 +43,13 @@ my-agent-package/
 └── AGENTS.md
 ```
 
-Declare the source file and its destinations in `agent.yaml`:
+This manifest installs `AGENTS.md` into a project and creates a Claude Code
+adapter that imports the same file:
 
 ```yaml
 schema: 1
 name: typescript-project
-description: Project instructions for a TypeScript repository
+description: Project instructions for TypeScript repositories
 canonical:
   source: AGENTS.md
 files:
@@ -121,40 +65,50 @@ files:
         import: AGENTS.md
 ```
 
-Use `mode: direct` for a file copy. Use `mode: import` for the Claude adapter.
-The manifest must declare `canonical.source` for import targets. Keep paths
-relative to the package and the consuming project.
+Use `mode: direct` to copy a file. Use `mode: import` to write an adapter for a
+tool that supports imports. Import targets require `canonical.source`.
 
-## What `add` does
+Keep package paths relative to the package directory. The CLI rejects paths that
+escape their allowed root, duplicate destinations, and destination symlinks.
 
-1. Fetches the package through Git.
+## Installation scopes
+
+| Scope | Manifest fields | Example destination |
+| --- | --- | --- |
+| Project | `scope: project` | `./AGENTS.md` |
+| Global | `scope: global` and `agent` | `~/.codex/AGENTS.md` |
+
+A package can include project and global targets. The CLI updates state files for
+each scope used by the package.
+
+Global instructions affect every project that reads them. Review the source files
+before installing a global package:
+
+```sh
+npx @doomedramen/agents.md add github:doomedramen/agent-packages#packages/global-baseline
+```
+
+## Files written by `add`
+
+For each declared target, `add`:
+
+1. Fetches the source repository and resolves a Git commit.
 2. Reads and validates `agent.yaml`.
-3. Replaces each declared target at its project or global destination.
-4. Writes the matching state and lock files with the resolved commit and file hashes.
+3. Replaces the destination file.
+4. Updates the matching manifest and lockfile with the source commit and hashes.
 
-`add` replaces an existing declared target, including `AGENTS.md`. It rejects
-unsafe paths, duplicate destinations, and target symlinks. It does not merge
-Markdown files or run package scripts.
+`add` replaces files owned by the package. It does not merge Markdown or run
+package scripts.
 
-The MVP resolves direct Git sources. The Git-backed package index described in
-[SPEC.md](SPEC.md) will provide named discovery in a later phase.
+## Reference packages
 
-## Public references
+The [agent-packages repository](https://github.com/doomedramen/agent-packages)
+contains working project and global packages:
 
-The reference packages use patterns from these public sources:
-
-- [Codex instructions and scope](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
-- [Claude Code memory and imports](https://code.claude.com/docs/en/memory)
-- [OpenAI Agents Python `AGENTS.md`](https://github.com/openai/openai-agents-python/blob/main/AGENTS.md)
-- [OpenAI Codex `AGENTS.md`](https://github.com/openai/codex/blob/main/AGENTS.md)
-- [Vercel AI SDK `AGENTS.md`](https://github.com/vercel/ai/blob/main/AGENTS.md)
-- [WordPress Contributor Toolkit `AGENTS.md`](https://github.com/WordPress/contributor-toolkit/blob/trunk/AGENTS.md)
-- [Codex global template](https://github.com/yuanguang-ai-lab/codex-global-agents-template/blob/main/AGENTS.md)
-- [Skills documentation](https://www.skills.sh/docs) for GitHub-native package discovery.
-
-The reference files are original compositions. The package repository keeps
-their manifests and source files together so the commands above install the
-same files shown in the documentation.
+- [TypeScript project manifest](https://github.com/doomedramen/agent-packages/blob/main/packages/project-typescript/agent.yaml)
+- [TypeScript project instructions](https://github.com/doomedramen/agent-packages/blob/main/packages/project-typescript/AGENTS.md)
+- [Global baseline manifest](https://github.com/doomedramen/agent-packages/blob/main/packages/global-baseline/agent.yaml)
+- [Global baseline instructions](https://github.com/doomedramen/agent-packages/blob/main/packages/global-baseline/AGENTS.md)
 
 ## Development
 
@@ -164,5 +118,13 @@ npm run check
 npm run build
 ```
 
-The CLI source lives in [`src/`](src/). The npm package is
-`@doomedramen/agents.md`; its `bin` entry exposes the `agents.md` executable.
+Source code lives in [`src/`](src/). See [`SPEC.md`](SPEC.md) for the package
+format, security rules, state model, and planned Git-backed package index.
+
+## Further reading
+
+- [Codex `AGENTS.md` guidance](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
+- [Claude Code memory and imports](https://code.claude.com/docs/en/memory)
+- [OpenAI Codex instructions](https://github.com/openai/codex/blob/main/AGENTS.md)
+- [Vercel AI SDK instructions](https://github.com/vercel/ai/blob/main/AGENTS.md)
+- [WordPress Contributor Toolkit instructions](https://github.com/WordPress/contributor-toolkit/blob/trunk/AGENTS.md)
