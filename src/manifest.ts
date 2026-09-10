@@ -286,7 +286,8 @@ function parsePackMember(raw: unknown, index: number): PackMemberDeclaration {
     source: requiredString(raw.source, `agents.yaml: packages[${index}].source`),
   };
   if (!fragmentIdPattern.test(member.id)) throw new Error(`agents.yaml: packages[${index}].id must be a simple alias`);
-  if (member.source.startsWith("/") || (!member.source.startsWith("./") && !member.source.startsWith("../") && member.source !== "." && !/^(?:github:|@|https?:\/\/|git@|file:\/\/)/.test(member.source) && !/^[^\/\s]+\/[^\/\s#]+(?:#.*)?$/.test(member.source))) {
+  const sourcePart = member.source.split("#", 1)[0];
+  if (member.source.startsWith("/") || (!sourcePart.startsWith("./") && !sourcePart.startsWith("../") && sourcePart !== "." && sourcePart !== ".." && !/^(?:github:|@|https?:\/\/|git@|file:\/\/)/.test(member.source) && !/^[^\/\s]+\/[^\/\s#]+(?:#.*)?$/.test(member.source))) {
     throw new Error(`agents.yaml: packages[${index}].source must be a Git source or explicit relative path`);
   }
   if (raw.ref !== undefined) member.ref = assertValidRef(raw.ref, `agents.yaml: packages[${index}].ref`);

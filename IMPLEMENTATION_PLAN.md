@@ -332,9 +332,9 @@ Do not implement a hosted registry, web dashboard, automatic background updater,
   transactional recovery, project/global commands, migration, examples/docs, and static
   detection are complete. Schema 1 remains isolated behind its legacy path and narrow
   migration reader; schema 2 has no pre-v2 destination compatibility requirement.
-- Verified with `npm run check` (9 passing tests), `git diff --check`, and
+- Verified with `npm run check` (11 passing tests), `git diff --check`, and
   `npm pack --dry-run --json`. Built-executable walkthroughs covered direct mixed stacks,
   nested outputs, pack expansion/omissions, global Claude/Codex destinations, adoption,
   migration, immutable dirty-source reads, update/diff/outdated, and offline checks.
 - Implementation commits pushed to `origin/main`: `55afc9c`, `356fe27`, `3dd7ef1`,
-  `5877bff`, `78346ee`, and `60df6cf`.
+  `5877bff`, `78346ee`, `60df6cf`, `886da84`, and `92d3718`.

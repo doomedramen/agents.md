@@ -31,8 +31,8 @@ function usage(): string {
 
 Commands:
   init [--global] [--adopt] [--agents <list>] [--dry-run]
-  add <source>... [--ref <ref>] [--dir <directory>] [--id <id>] [--global] [--dry-run]
-  remove <id>... [--global]
+  add <source>... [--ref <ref>] [--dir <directory>] [--id <id>] [--global] [--agents <list>] [--dry-run]
+  remove <id>... [--global] [--dry-run]
   render [--offline] [--global]
   diff [--update] [--global]
   update [<id>...] [--global] [--dry-run]
@@ -50,7 +50,7 @@ function commandHelp(command: string): string {
   const text: Record<string, string> = {
     init: "init [--global] [--adopt] [--agents claude-code,codex] [--dry-run]",
     add: "add <source>... [--ref <ref>] [--dir <directory>] [--id <id>] [--global] [--agents <list>] [--dry-run]",
-    remove: "remove <id>... [--global]",
+    remove: "remove <id>... [--global] [--dry-run]",
     render: "render [--offline] [--global]",
     diff: "diff [--update] [--global]",
     update: "update [<id>...] [--global] [--dry-run]",

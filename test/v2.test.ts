@@ -10,6 +10,7 @@ import { parse } from "yaml";
 import { parseConsumerConfigBytes, parsePackageManifestBytes } from "../src/manifest.js";
 import { detectProjectData } from "../src/detect.js";
 import { applyTransaction } from "../src/transaction.js";
+import { createSourceResolutionCache, readCachedFile, resolveV2Source } from "../src/git.js";
 
 const execFile = promisify(execFileCallback);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -105,6 +106,35 @@ test("v2 locks immutable bytes and update sees a new commit", async () => {
     assert.doesNotMatch(await readFile(join(consumer, "AGENTS.md"), "utf8"), /DIRTY/);
     await runCli(["check"], consumer, env);
   } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+test("same repository refs share one immutable snapshot during an operation", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "agents-md-snapshot-"));
+  const previousConfigDirectory = process.env.AGENTS_CONFIG_DIR;
+  try {
+    const source = await gitRepo(join(fixture, "source"), {
+      "packages/one/agent.yaml": packageManifest("one", "rules.md", "One"),
+      "packages/one/rules.md": "A\n",
+      "packages/two/agent.yaml": packageManifest("two", "rules.md", "Two"),
+      "packages/two/rules.md": "B\n",
+    });
+    const consumer = join(fixture, "consumer");
+    await mkdir(consumer, { recursive: true });
+    process.env.AGENTS_CONFIG_DIR = join(fixture, "config");
+    const cache = createSourceResolutionCache();
+    const first = await resolveV2Source("../source#packages/one", consumer, undefined, true, cache);
+    await writeFile(join(source.root, "after-first-resolution.txt"), "changed after snapshot\n");
+    await run("git", ["add", "after-first-resolution.txt"], source.root);
+    await run("git", ["commit", "-m", "move head"], source.root);
+    const second = await resolveV2Source("../source#packages/two", consumer, undefined, true, cache);
+    assert.equal(second.commit, first.commit);
+    assert.equal((await readCachedFile(first.root, "rules.md")).toString("utf8"), "A\n");
+    assert.equal((await readCachedFile(second.root, "rules.md")).toString("utf8"), "B\n");
+  } finally {
+    if (previousConfigDirectory === undefined) delete process.env.AGENTS_CONFIG_DIR;
+    else process.env.AGENTS_CONFIG_DIR = previousConfigDirectory;
     await rm(fixture, { recursive: true, force: true });
   }
 });

@@ -300,11 +300,16 @@ function manifestFragmentDeclarations(manifest: PackageManifest): FragmentDeclar
 
 function compatibleV1(manifest: PackageManifestV1): void {
   if (!manifest.canonical) throw new Error("v1-canonical package requires canonical.source");
-  const canonical = manifest.files.filter((file) => file.source === manifest.canonical?.source);
-  const direct = canonical.some((file) => file.targets.some((target) => target.scope === "project" && target.path === "AGENTS.md" && target.mode !== "import"));
+  const canonicalSource = manifest.canonical.source;
+  const canonical = manifest.files.filter((file) => file.source === canonicalSource);
+  const direct = canonical.some((file) => file.targets.some((target) => target.scope === "project" && target.agent === undefined && target.path === "AGENTS.md" && target.mode !== "import"));
   const claude = canonical.some((file) => file.targets.some((target) => target.scope === "project" && target.agent === "claude-code" && target.path === "CLAUDE.md" && target.mode === "import" && target.import === "AGENTS.md"));
   if (!direct || !claude) throw new Error("v1-canonical package must target project AGENTS.md and exact Claude import");
-  if (manifest.files.some((file) => file.targets.some((target) => target.scope === "global" || (target.scope === "project" && target.path !== "AGENTS.md" && target.path !== "CLAUDE.md")))) {
+  if (manifest.files.some((file) => file.source !== canonicalSource || file.targets.some((target) => {
+    const isDirect = target.scope === "project" && target.agent === undefined && target.path === "AGENTS.md" && target.mode !== "import";
+    const isClaude = target.scope === "project" && target.agent === "claude-code" && target.path === "CLAUDE.md" && target.mode === "import" && target.import === "AGENTS.md";
+    return !isDirect && !isClaude;
+  }))) {
     throw new Error("v1-canonical package contains unsupported destinations");
   }
 }
@@ -367,6 +372,11 @@ function memberSource(recipe: LoadedPackWithRoot, member: PackMemberDeclaration)
   return { type: "git", url: sourcePart, path: assertSafeDirectoryPath(suffix, `pack member ${member.id}.source`) };
 }
 
+function isRelativePackMember(source: string): boolean {
+  const sourcePart = source.split("#", 1)[0];
+  return sourcePart.startsWith("./") || sourcePart.startsWith("../") || sourcePart === "." || sourcePart === "..";
+}
+
 // TypeScript cannot add private fields to the public lock model; this field stays internal to a loaded recipe.
 type LoadedPackWithRoot = LoadedPack & { rootForRelative: string };
 
@@ -422,7 +432,7 @@ async function resolvePack(
     }
   }
   for (const member of recipe.manifest.packages) {
-    if ((member.source.startsWith("./") || member.source.startsWith("../") || member.source === ".") && member.ref !== undefined) {
+    if (isRelativePackMember(member.source) && member.ref !== undefined) {
       throw new Error(`Relative pack member cannot specify ref: ${selection.id}/${member.id}`);
     }
     const memberSourceDescriptor = memberSource(recipe, member);
@@ -434,7 +444,7 @@ async function resolvePack(
       if (!expected) throw new Error(`Pack lock missing member: ${selection.id}/${member.id}`);
       memberResolved = await resolveV2SourceAt(expected.source, expected.commit, offline);
       requestedRef = expected.requestedRef ?? undefined;
-    } else if (member.source.startsWith("./") || member.source.startsWith("../") || member.source === ".") {
+    } else if (isRelativePackMember(member.source)) {
       memberResolved = await resolveV2SourceAt(memberSourceDescriptor, recipe.commit, offline);
     } else {
       requestedRef = member.ref;
@@ -954,7 +964,15 @@ export async function checkV2(options: V2CommandOptions): Promise<void> {
   if (lock.rendererVersion !== RENDERER_VERSION) throw new Error(`Unsupported renderer version in lock: ${lock.rendererVersion}`);
   if (lock.configSha256 !== canonicalConfigHash(config)) throw checkFailure("Configuration changed since last render; run agents.md render");
   if (lock.selectionSha256 && lock.selectionSha256 !== selectionFingerprint(config)) throw checkFailure("Package or pack source/ref membership changed; run agents.md update");
-  const rendered = await renderLoadedState({ ...options, previousLock: lock });
+  let rendered: RenderedState;
+  try {
+    rendered = await renderLoadedState({ ...options, previousLock: lock });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Configured local fragment is missing:")) {
+      throw checkFailure(error.message);
+    }
+    throw error;
+  }
   const expectedPackages = new Set(config.packages.map((selection) => selection.id));
   const expectedPacks = new Set(config.packs.map((selection) => selection.id));
   if (Object.keys(lock.packages).some((id) => !expectedPackages.has(id)) || Object.keys(lock.packs).some((id) => !expectedPacks.has(id))) {
@@ -973,9 +991,11 @@ export async function checkV2(options: V2CommandOptions): Promise<void> {
   const expectedGenerated = Object.keys(lock.generatedFiles).sort();
   const plannedGenerated = [...rendered.generated.keys()].sort();
   if (JSON.stringify(expectedGenerated) !== JSON.stringify(plannedGenerated)) throw checkFailure("Generated file ownership differs from lock; run agents.md render");
+  const expectedOwnership = Object.keys(lock.ownership).sort();
+  if (JSON.stringify(expectedOwnership) !== JSON.stringify(plannedGenerated)) throw checkFailure("Generated ownership differs from lock; run agents.md render");
   for (const [logical, generated] of rendered.generated) {
     const locked = lock.generatedFiles[logical];
-    if (!locked || locked.sha256 !== sha256(generated.contents) || JSON.stringify(locked.owners) !== JSON.stringify(generated.owners) || JSON.stringify(lock.ownership[logical] ?? []) !== JSON.stringify(locked.owners)) {
+    if (!locked || locked.kind !== generated.kind || locked.sha256 !== sha256(generated.contents) || JSON.stringify(locked.owners) !== JSON.stringify(generated.owners) || JSON.stringify(lock.ownership[logical] ?? []) !== JSON.stringify(locked.owners)) {
       throw checkFailure(`Generated ownership differs from lock: ${logical}; run agents.md render`);
     }
     const destination = logicalDestination(options, logical);
@@ -1584,6 +1604,7 @@ async function existingCanonical(path: string): Promise<Buffer | undefined> {
 export async function initV2(options: V2CommandOptions & { adopt?: boolean; agents?: string[]; dryRun?: boolean }): Promise<{ created: boolean; paths: string[] }> {
   const paths = scopePaths(options);
   await recoverScopeTransaction(options);
+  await assertNoLegacyScope(options);
   const expectedConfigSha256 = await fileHash(paths.configPath);
   const expectedLockSha256 = await fileHash(paths.lockPath);
   if (expectedConfigSha256 !== null) {
