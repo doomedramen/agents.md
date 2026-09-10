@@ -1,5 +1,5 @@
 import { access, lstat, readFile, realpath } from "node:fs/promises";
-import { isAbsolute, join, normalize, posix, win32 } from "node:path";
+import { isAbsolute, join, normalize, posix, relative, win32 } from "node:path";
 import { parse } from "yaml";
 import type {
   FragmentDeclaration,
@@ -51,7 +51,7 @@ export function assertSafeRelativePath(value: unknown, field: string): string {
     isAbsolute(path) ||
     posix.isAbsolute(normalizedSeparators) ||
     win32.isAbsolute(path) ||
-    /^[A-Za-z]:\//.test(normalizedSeparators) ||
+    /^[A-Za-z]:/.test(normalizedSeparators) ||
     normalizedSeparators.split("/").includes("..") ||
     normalizedSeparators === "." ||
     normalizedSeparators.includes("\0")
@@ -68,7 +68,7 @@ export function assertSafeDirectoryPath(value: unknown, field: string): string {
     isAbsolute(path) ||
     posix.isAbsolute(normalizedSeparators) ||
     win32.isAbsolute(path) ||
-    /^[A-Za-z]:\//.test(normalizedSeparators) ||
+    /^[A-Za-z]:/.test(normalizedSeparators) ||
     normalizedSeparators.split("/").includes("..") ||
     normalizedSeparators.includes("\0")
   ) {
@@ -200,6 +200,7 @@ function validateImportTargets(manifest: PackageManifestV1): void {
 }
 
 function parseV1(raw: Record<string, unknown>): PackageManifestV1 {
+  unknownFields(raw, new Set(["schema", "name", "description", "canonical", "files"]), "agent.yaml");
   const canonical = raw.canonical;
   let parsedCanonical: PackageManifestV1["canonical"];
   if (canonical !== undefined) {
@@ -328,7 +329,8 @@ export async function validateDeclaredSources(root: string, manifest: PackageMan
       await access(absolute);
       const stat = await lstat(absolute);
       const targetReal = await realpath(absolute);
-      if (!targetReal.startsWith(`${rootReal}/`) && targetReal !== rootReal) {
+      const relation = relative(rootReal, targetReal);
+      if (relation.startsWith("..") || isAbsolute(relation)) {
         throw new Error(`declared source escapes package root: ${source}`);
       }
       if (!stat.isFile()) throw new Error(`declared source is not a regular file: ${source}`);
@@ -437,6 +439,12 @@ function assertConsumerSource(value: unknown, field: string): string {
     throw new Error(`${field} must be a Git source or explicit ./ / ../ local path`);
   }
   return source;
+}
+
+function pathsOverlap(left: string, right: string): boolean {
+  const a = left.toLowerCase();
+  const b = right.toLowerCase();
+  return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
 function parseConsumerPackage(raw: unknown, index: number): V2PackageSelection {
@@ -561,19 +569,35 @@ export function parseConsumerConfigBytes(bytes: Buffer | string, global = false)
   if (global && (outputs.length !== 1 || outputs[0].local.length !== 1 || outputs[0].local[0] !== "local.md")) {
     throw new Error("agents.yaml: global scope requires output . with local input local.md");
   }
-  const generatedPaths = new Set(outputs.flatMap((output) => [
+  const generatedPathList = outputs.flatMap((output) => [
     output.directory === "." ? "AGENTS.md" : `${output.directory}/AGENTS.md`,
     ...(output.adapters?.includes("claude-code") ? [output.directory === "." ? "CLAUDE.md" : `${output.directory}/CLAUDE.md`] : []),
-  ]).map((path) => path.toLowerCase()));
-  const statePaths = new Set(["agents.yaml", "agents.lock", ".agents/.operation.lock", ".agents/.recovery.json"]);
+  ]);
+  for (let index = 0; index < generatedPathList.length; index += 1) {
+    for (let other = index + 1; other < generatedPathList.length; other += 1) {
+      if (pathsOverlap(generatedPathList[index], generatedPathList[other])) {
+        throw new Error(`agents.yaml: generated destinations overlap: ${generatedPathList[index]} and ${generatedPathList[other]}`);
+      }
+    }
+  }
+  const statePaths = ["agents.yaml", "agents.lock", ".agents/.operation.lock", ".agents/.recovery.json", ".agents/adopted"];
+  if (!global && outputs.some((output) => output.directory === ".agents" || output.directory.startsWith(".agents/"))) {
+    throw new Error("agents.yaml: output directory overlaps managed .agents state");
+  }
   for (const output of outputs) {
     for (const local of output.local) {
       const key = local.toLowerCase();
-      if (generatedPaths.has(key)) throw new Error(`agents.yaml: local input overlaps a generated file: ${local}`);
-      if (!global && (statePaths.has(key) || key.startsWith(".agents/adopted/"))) {
-        throw new Error(`agents.yaml: local input overlaps managed state: ${local}`);
+      const generated = generatedPathList.find((path) => pathsOverlap(local, path));
+      if (generated) throw new Error(`agents.yaml: local input overlaps a generated file: ${local}`);
+      if (!global) {
+        const state = statePaths.find((path) => pathsOverlap(local, path));
+        if (state) throw new Error(`agents.yaml: local input overlaps managed state: ${local}`);
       }
     }
+  }
+  for (const generated of generatedPathList) {
+    const state = statePaths.find((path) => pathsOverlap(generated, path));
+    if (state) throw new Error(`agents.yaml: generated destination overlaps managed state: ${generated}`);
   }
   return {
     version: 2,

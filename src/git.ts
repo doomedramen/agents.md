@@ -1,11 +1,10 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { cp, existsSync } from "node:fs";
 import { access, lstat, mkdir, mkdtemp, readFile, realpath, rm, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { configDirectory } from "./paths.js";
-import { parsePackageManifestBytes, readPackageManifest, readSourceDocument, assertSafeDirectoryPath, assertValidRef } from "./manifest.js";
+import { readPackageManifest, readSourceDocument, assertSafeDirectoryPath, assertValidRef } from "./manifest.js";
 import type { PackManifest, PackageManifestV1, ResolvedPackage, ResolvedV2Source, SourceDescriptor } from "./types.js";
 import { createHash } from "node:crypto";
 
@@ -66,11 +65,19 @@ function validateRepositoryPath(packagePath: string): string {
 }
 
 async function assertNoEscapingPath(repositoryRoot: string, packageRoot: string, label: string): Promise<void> {
-  if ((await lstat(packageRoot)).isSymbolicLink()) throw new Error(`${label} is a symlink: ${packageRoot}`);
   const repositoryReal = await realpath(repositoryRoot);
   const packageReal = await realpath(packageRoot);
-  if (packageReal !== repositoryReal && !packageReal.startsWith(`${repositoryReal}/`)) {
+  const relation = relative(repositoryReal, packageReal);
+  if (relation.startsWith("..") || isAbsolute(relation)) {
     throw new Error(`${label} escapes Git repository: ${packageRoot}`);
+  }
+  let current = resolve(packageRoot);
+  while (true) {
+    if ((await lstat(current)).isSymbolicLink()) throw new Error(`${label} is a symlink: ${current}`);
+    if (await realpath(current) === repositoryReal) break;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
   }
 }
 
@@ -233,13 +240,58 @@ async function currentSnapshot(
   }
 }
 
+export interface SourceResolutionCache {
+  current: Map<string, Promise<{ repositoryRoot: string; source: SourceDescriptor; commit: string }>>;
+}
+
+export function createSourceResolutionCache(): SourceResolutionCache {
+  return { current: new Map() };
+}
+
+async function resolveCurrentSnapshot(
+  source: SourceDescriptor,
+  localRepositoryRoot: string | undefined,
+  requestedRef: string | undefined,
+): Promise<{ repositoryRoot: string; source: SourceDescriptor; commit: string }> {
+  let repositoryRoot: string;
+  let commit: string;
+  let temporary: string | undefined;
+  if (localRepositoryRoot) {
+    repositoryRoot = localRepositoryRoot;
+    commit = await resolveLocalCommit(repositoryRoot, requestedRef);
+  } else {
+    temporary = await cloneRepository(source.url);
+    repositoryRoot = temporary;
+    commit = await resolveRemoteCommit(repositoryRoot, requestedRef);
+  }
+  try {
+    const cachedRoot = await ensureCachedSnapshot(source, commit, false);
+    return { repositoryRoot: cachedRoot, source, commit };
+  } finally {
+    if (temporary) await rm(temporary, { recursive: true, force: true });
+  }
+}
+
 export async function resolveV2Source(
   reference: string,
   cwd: string,
   requestedRef?: string,
   requireExplicitLocal = true,
+  cache?: SourceResolutionCache,
 ): Promise<ResolvedV2Source> {
-  return currentSnapshot(reference, cwd, requestedRef, requireExplicitLocal);
+  if (!cache) return currentSnapshot(reference, cwd, requestedRef, requireExplicitLocal);
+  const parsed = await parseGitSource(reference, cwd, requireExplicitLocal);
+  const key = `${parsed.source.url}\0${requestedRef ?? "HEAD"}`;
+  let snapshot = cache.current.get(key);
+  if (!snapshot) {
+    snapshot = resolveCurrentSnapshot(parsed.source, parsed.repositoryRoot, requestedRef);
+    cache.current.set(key, snapshot);
+  }
+  const resolved = await snapshot;
+  const root = join(resolved.repositoryRoot, ...parsed.source.path.split("/"));
+  await access(root);
+  await assertNoEscapingPath(resolved.repositoryRoot, root, "Git package path");
+  return { root, repositoryRoot: resolved.repositoryRoot, source: parsed.source, commit: resolved.commit, requestedRef };
 }
 
 export async function resolveV2SourceAt(

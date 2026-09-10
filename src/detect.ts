@@ -42,6 +42,7 @@ async function directories(path: string): Promise<string[]> {
 
 async function expandWorkspacePattern(root: string, pattern: string): Promise<string[]> {
   const parts = pattern.replaceAll("\\", "/").split("/").filter(Boolean);
+  if (parts.includes("node_modules") || parts.includes("..")) return [];
   let current = [root];
   for (const part of parts) {
     const next: string[] = [];
@@ -105,12 +106,10 @@ export async function detectProjectData(root: string): Promise<{ evidence: Detec
       errors.push("package.json is malformed");
     } catch {}
   }
-  if (rootPackage) {
-    for (const path of await workspacePaths(root, rootPackage)) {
-      const value = await readJson(path);
-      if (value) manifests.push({ path: relative(root, path).replaceAll("\\", "/"), value });
-      else errors.push(`${relative(root, path).replaceAll("\\", "/")} is malformed or unreadable`);
-    }
+  for (const path of await workspacePaths(root, rootPackage ?? {})) {
+    const value = await readJson(path);
+    if (value) manifests.push({ path: relative(root, path).replaceAll("\\", "/"), value });
+    else errors.push(`${relative(root, path).replaceAll("\\", "/")} is malformed or unreadable`);
   }
   const evidence = manifests.flatMap(dependencyEvidence);
   for (const [technology, path] of [["TypeScript", "tsconfig.json"], ["Prisma", "prisma/schema.prisma"], ["Turborepo", "turbo.json"]] as const) {

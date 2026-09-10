@@ -69,6 +69,11 @@ async function ensureNoSymlinkAncestors(path: string, boundary: string): Promise
 
 export async function assertNoSymlinkPath(path: string, boundary: string): Promise<void> {
   await ensureNoSymlinkAncestors(path, boundary);
+  try {
+    if ((await lstat(resolve(path))).isSymbolicLink()) throw new Error(`Refusing symlink target: ${path}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
 }
 
 async function currentHash(path: string): Promise<string | null> {
@@ -104,7 +109,7 @@ async function writeJournal(path: string, journal: Journal): Promise<void> {
   await writeFile(path, JSON.stringify(journal, null, 2) + "\n", "utf8");
 }
 
-export async function recoverTransaction(journalPath: string): Promise<void> {
+export async function recoverTransaction(journalPath: string, allowActiveLock = false): Promise<void> {
   let journalStat;
   try {
     journalStat = await lstat(journalPath);
@@ -120,7 +125,7 @@ export async function recoverTransaction(journalPath: string): Promise<void> {
     throw new Error(`Recovery journal is unreadable: ${journalPath}: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (await exists(journal.lockPath)) {
-    if (activeLocks.has(journal.lockPath)) throw new Error(`Another agents.md operation is already running: ${journal.lockPath}`);
+    if (activeLocks.has(journal.lockPath) && !allowActiveLock) throw new Error(`Another agents.md operation is already running: ${journal.lockPath}`);
     try {
       const pid = Number.parseInt((await readFile(journal.lockPath, "utf8")).trim(), 10);
       if (!Number.isInteger(pid)) throw new Error(`Recovery lock is unreadable: ${journal.lockPath}`);
@@ -143,7 +148,12 @@ export async function recoverTransaction(journalPath: string): Promise<void> {
       await rm(record.path, { force: true });
       await copyFile(record.backup, record.path);
     } else if (!record.existed) {
-      await rm(record.path, { force: true });
+      try {
+        await rm(record.path, { force: true });
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+      }
     }
   }
   await rm(journal.stageRoot, { recursive: true, force: true });
@@ -197,7 +207,7 @@ export async function applyTransaction(options: {
       return !relation.startsWith("..") && !isAbsolute(relation);
     });
     if (!stateBoundary) throw new Error(`Transaction state path is outside allowed roots: ${statePath}`);
-    await ensureNoSymlinkAncestors(statePath, stateBoundary);
+    await assertNoSymlinkPath(statePath, stateBoundary);
   }
   await recoverTransaction(options.journalPath);
   await acquireLock(options.lockPath);
@@ -251,7 +261,7 @@ export async function applyTransaction(options: {
       await rm(options.journalPath, { force: true });
       await rm(stageRoot, { recursive: true, force: true });
     } catch (error) {
-      await recoverTransaction(options.journalPath);
+      await recoverTransaction(options.journalPath, true);
       throw error;
     }
   } finally {

@@ -4,7 +4,7 @@ import { isAbsolute, resolve } from "node:path";
 import { parse } from "yaml";
 import { readFile } from "node:fs/promises";
 import { addPackage } from "./install.js";
-import { readResolvedSource, resolveV2Source } from "./git.js";
+import { createSourceResolutionCache, readResolvedSource, resolveV2Source, type SourceResolutionCache } from "./git.js";
 import {
   addV2,
   checkV2,
@@ -138,15 +138,20 @@ async function v2ConfigExists(projectRoot: string, global: boolean): Promise<boo
   }
 }
 
-async function inspectSources(references: string[], projectRoot: string, ref?: string): Promise<Array<"v1" | "v2-package" | "v2-pack">> {
+async function inspectSources(
+  references: string[],
+  projectRoot: string,
+  ref?: string,
+): Promise<{ kinds: Array<"v1" | "v2-package" | "v2-pack">; resolutionCache: SourceResolutionCache }> {
   const kinds: Array<"v1" | "v2-package" | "v2-pack"> = [];
+  const resolutionCache = createSourceResolutionCache();
   for (const reference of references) {
-    const resolved = await resolveV2Source(reference, projectRoot, ref, isAbsolute(reference.split("#", 1)[0]) ? false : true);
+    const resolved = await resolveV2Source(reference, projectRoot, ref, isAbsolute(reference.split("#", 1)[0]) ? false : true, resolutionCache);
     const document = await readResolvedSource(resolved);
     if (document.kind === "pack") kinds.push("v2-pack");
     else kinds.push(document.manifest.schema === 1 ? "v1" : "v2-package");
   }
-  return kinds;
+  return { kinds, resolutionCache };
 }
 
 async function handleAdd(parsed: Parsed, projectRoot: string): Promise<void> {
@@ -159,7 +164,8 @@ async function handleAdd(parsed: Parsed, projectRoot: string): Promise<void> {
   if (global && directory !== undefined) throw new UsageError("--dir cannot be combined with --global");
   const alreadyV2 = await v2ConfigExists(projectRoot, global);
   if (global && agents && alreadyV2) throw new UsageError("--agents is accepted only while creating a global scope");
-  const kinds = await inspectSources(parsed.positional, projectRoot, ref);
+  const inspection = await inspectSources(parsed.positional, projectRoot, ref);
+  const kinds = inspection.kinds;
   const hasV1 = kinds.includes("v1");
   const hasV2 = kinds.some((kind) => kind !== "v1");
   if (hasV1 && hasV2) throw new UsageError("Cannot mix schema 1 and schema 2 sources in one add invocation");
@@ -183,6 +189,7 @@ async function handleAdd(parsed: Parsed, projectRoot: string): Promise<void> {
     ...(id === undefined ? {} : { id }),
     ...(directory === undefined ? {} : { directory }),
     ...(agents === undefined ? {} : { agents }),
+    resolutionCache: inspection.resolutionCache,
     dryRun: hasFlag(parsed, "dry-run"),
   });
   for (const alias of result.ids) console.log(`${hasFlag(parsed, "dry-run") ? "Would add" : "Added"} ${alias}`);

@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { parse } from "yaml";
 import { parseConsumerConfigBytes, parsePackageManifestBytes } from "../src/manifest.js";
 import { detectProjectData } from "../src/detect.js";
+import { applyTransaction } from "../src/transaction.js";
 
 const execFile = promisify(execFileCallback);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -113,6 +114,29 @@ test("v2 parser rejects unknown fields, duplicate aliases, unsafe paths, and unk
   assert.throws(() => parsePackageManifestBytes("schema: 2\nname: x\ndescription: x\nwat: true\nfragments: []\n"), /unknown field wat/);
   assert.throws(() => parseConsumerConfigBytes(`version: 2\npackages:\n- id: x\n  source: github:a/b\n- id: x\n  source: github:c/d\npacks: []\noutputs: []\n`), /duplicate alias/);
   assert.throws(() => parseConsumerConfigBytes(`version: 2\npackages: []\npacks: []\noutputs:\n- directory: ../escape\n  use: []\n  local: []\n`), /safe relative directory/);
+});
+
+test("transaction rollback restores all destinations after a caught apply failure", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "agents-md-transaction-"));
+  try {
+    await assert.rejects(
+      applyTransaction({
+        writes: [
+          { path: join(fixture, "a"), contents: Buffer.from("first\n"), expectedSha256: null },
+          { path: join(fixture, "a", "b"), contents: Buffer.from("second\n"), expectedSha256: null },
+        ],
+        lockPath: join(fixture, ".agents", ".operation.lock"),
+        journalPath: join(fixture, ".agents", ".recovery.json"),
+        boundary: fixture,
+      }),
+      /ENOTDIR/,
+    );
+    await assert.rejects(readFile(join(fixture, "a")));
+    await assert.rejects(readFile(join(fixture, ".agents", ".recovery.json")));
+    await assert.rejects(readFile(join(fixture, ".agents", ".operation.lock")));
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
 });
 
 test("detect reports static workspace evidence without executing or writing", async () => {
