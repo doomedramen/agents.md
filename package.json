@@ -1,0 +1,28 @@
+{
+  "name": "agents.md",
+  "version": "0.1.0",
+  "description": "Git-native package manager for AI coding-agent instructions",
+  "type": "module",
+  "bin": {
+    "agents.md": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "npm run build && npm test",
+    "test": "tsx --test 'test/**/*.test.ts'"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
