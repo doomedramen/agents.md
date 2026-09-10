@@ -12,7 +12,7 @@ Start with Phase 1. Continue through the phases, verify each completion gate, an
 
 A company maintains agreed instructions in a private Git repository. Developers install and update those instructions on their machines. Teams compose project guidance from several technologies, such as TypeScript, Express, ConnectRPC, PostgreSQL, and Vitest, with project-owned additions. They review instruction changes through Git.
 
-A solo developer installs community-contributed instruction packages from public Git repositories, combines conventions relevant to their project, and adds their own preferences. They need no company account, private index, machine profile, or organization setup. Make public and private Git sources equal participants in the same composition model. A company profile is an optional workflow, not the product's organizing assumption.
+A solo developer installs community-contributed instruction packages from public Git repositories, combines conventions relevant to their project, and adds their own preferences. They need no company account, private index, machine pack, or organization setup. Make public and private Git sources equal participants in the same composition model. Anyone can publish a pack: a named collection of instruction packages for a personal workflow, project stack, community, or team.
 
 This tool distributes standing rules and project context for `AGENTS.md`: architectural boundaries, code conventions, validation expectations, repository orientation, and team collaboration expectations. Skills cover task-specific procedures and supporting resources. Complement the skills ecosystem; do not install, execute, mirror, or repackage skills, or implement a competing skill format. A package may mention an existing skill and its purpose in prose, but the CLI must not infer a skill dependency or install it.
 
@@ -22,7 +22,7 @@ Document two equally prominent getting-started paths: selecting public community
 
 Produce one canonical `AGENTS.md` per destination directory. Produce `CLAUDE.md` containing exactly `@AGENTS.md\n`. Use regular files. Packages contribute Markdown; consuming configurations choose destinations.
 
-Project instructions must work from a fresh checkout without installing this CLI. Commit generated project instructions, configuration, and lockfile. Machine profiles remain independent of project configuration. Include essential company rules in project configurations if CI must verify their presence; a developer's global configuration cannot provide a repository guarantee.
+Project instructions must work from a fresh checkout without installing this CLI. Commit generated project instructions, configuration, and lockfile. Machine packs remain independent of project configuration. Include essential company rules in project configurations if CI must verify their presence; a developer's global configuration cannot provide a repository guarantee.
 
 ## Current implementation and constraints
 
@@ -133,17 +133,19 @@ Exit 0 for success/current, 1 for failed checks or available updates from `outda
 
 Allow output selection through YAML first. Avoid an interactive configuration editor in this release. `add` must fail clearly if there is no root output and explain how to edit output selections.
 
-### Machine profiles
+### Packs and installation scope
 
-Store named profiles under `configDirectory()/profiles/<name>/`, reusing current environment overrides. Do not introduce a second hardcoded `~/.agents` state directory.
+Use **pack** for a shareable collection of instruction packages. Use **directory** for a filesystem location or a future discovery listing, not as a second name for the same collection. The [skills.sh packs documentation](https://www.skills.sh/docs/packs) provides the collection terminology; our packs contain AGENTS.md guidance and do not implement its skill format or hosted sharing service.
 
-A profile source is a Git directory containing a v2 `agents.yaml` recipe. Resolve package-relative sources against the recipe's repository and locked commit; explicit external Git sources remain supported. Recipe outputs select registered agent names (`claude-code`, `codex`) instead of project directories. Copy locked local recipe fragments into verified snapshot storage; never treat a remote recipe path as an arbitrary local path.
+A pack can be installed into a project or at user-global scope. Scope belongs to the installation, not the pack author or an organization type. Store user-global named packs under `configDirectory()/packs/<name>/`, reusing current environment overrides. Do not introduce a second hardcoded `~/.agents` state directory.
 
-Provide `profile install <name> <source> [--ref <ref>]`, `profile diff <name> [--update]`, `profile update <name>`, `profile check <name> [--offline]`, `profile outdated <name>`, and `profile remove <name>`. Share composition and transaction code with project commands.
+A pack source is a Git directory containing a v2 `agents.yaml` recipe. Project installations record the pack source, ref, resolved commit, and expanded package selections in the project lock; updates must retain pack membership provenance, including additions and removals. Resolve package-relative sources against the recipe's repository and locked commit; explicit external Git sources remain supported. Project installs apply recipe output directories relative to the consuming project. Global installs accept only a root output and select registered agents (`claude-code`, `codex`) through installation options; reject nested recipe outputs for global scope. Store agent choices in installation state, so the same root pack can serve either scope. Copy locked local recipe fragments into verified snapshot storage; never treat a remote recipe path as an arbitrary local path.
 
-For Claude, write `~/.claude/AGENTS.md` and exact import `~/.claude/CLAUDE.md`. For Codex, write `~/.codex/AGENTS.md`. A machine ownership index prevents two profiles from owning the same destination. Do not silently switch profiles. Fail on existing unmanaged guidance, with a concrete backup/reconciliation instruction. Removing a profile deletes only unchanged files it owns and retains a recovery backup.
+Provide `pack install <name> <source> [--ref <ref>] [--global]`, `pack diff <name> [--update]`, `pack update <name>`, `pack check <name> [--offline]`, `pack outdated <name>`, and `pack remove <name>`. Default to project scope. Support `--global` on all pack commands to address the user-global installation; identical names in the two scopes identify separate installations. For global install, accept `--agents claude-code,codex`, defaulting to `claude-code`. Share composition and transaction code with project commands. A project pack must coexist with individually added packages: track membership, deduplicate identical source/ref entries, reject conflicting aliases or refs, and preserve independently selected packages on pack removal. Compose multiple packs in installation order, preserving each pack's internal order.
 
-Do not install scheduled jobs. Document running `profile outdated` to detect company updates, `profile diff --update` to review them, and `profile update` to apply them through a company bootstrap workflow. `profile check` verifies the installed lock, not freshness against a moving branch.
+For Claude, write `~/.claude/AGENTS.md` and exact import `~/.claude/CLAUDE.md`. For Codex, write `~/.codex/AGENTS.md`. A machine ownership index prevents two packs from owning the same destination. Do not silently switch packs. Fail on existing unmanaged guidance, with a concrete backup/reconciliation instruction. Removing a pack deletes only unchanged files it owns and retains a recovery backup.
+
+Do not install scheduled jobs. Document running `pack outdated` to detect upstream pack updates, `pack diff --update` to review them, and `pack update` to apply them through a personal or team bootstrap workflow. `pack check` verifies the installed lock, not freshness against a moving branch.
 
 ### Write safety and recovery
 
@@ -187,11 +189,11 @@ Implement `diff`, `update`, `outdated`, and narrow v1 migration. Retain unchange
 
 Gate: source commit A installs, source B appears, `check` remains successful while `outdated` reports B, `diff --update` previews B without writes, `update` installs B, and `check` succeeds. Local notes survive. Migration preserves locked bytes and produces a checkable v2 project; unsupported migration leaves original bytes untouched. Invalid new package content produces no partial update.
 
-### Phase 5: Machine profiles
+### Phase 5: Shareable packs
 
-Implement recipe resolution, named profile commands, registered output adapters, and cross-profile ownership checks. Use the same renderer, snapshot cache, and recovery engine.
+Implement recipe resolution, named pack commands, registered output adapters, and cross-pack ownership checks. Use the same renderer, snapshot cache, and recovery engine.
 
-Gate: with `AGENTS_TEST_HOME` and `AGENTS_CONFIG_DIR` set to temporary directories, install/update/check/remove company guidance for Claude and Codex. Tests must never touch the developer's real agent directories. Reject profile ownership collisions and preserve modified global guidance. Relative recipe sources use the recipe's locked commit. Demonstrate the freshness-versus-drift distinction for profiles.
+Gate: with `AGENTS_TEST_HOME` and `AGENTS_CONFIG_DIR` set to temporary directories, install/update/check/remove a public pack in a project and a private/team pack globally for Claude and Codex. Test the same root pack in both scopes, pack membership updates, and preservation of individually installed packages after pack removal. Tests must never touch the developer's real agent directories. Reject pack ownership collisions and preserve modified global guidance. Relative recipe sources use the recipe's locked commit. Demonstrate the freshness-versus-drift distinction for packs.
 
 ### Phase 6: Stack detection and starter recipes
 
@@ -199,9 +201,9 @@ Implement a small static detection catalog for TypeScript, Express, ConnectRPC, 
 
 Add local example packages and a mixed-service recipe under `examples/` for documentation and smoke testing. Suggestions refer to explicit configured/example sources; do not invent a hosted official registry. Teams can copy a recipe as a starting config for new projects; recipes do not scaffold application source code.
 
-Include a solo-developer recipe with no company package or profile. Add a package-author guide and a contribution template covering standing guidance, applicability, license, and public Git installation. Keep discovery lightweight for this release: README links to reviewed examples and explicit Git sources. A future community directory can index instruction packages and their provenance without hosting skills or becoming required for installation.
+Include a solo-developer recipe with no company package or pack. Add a package-author guide and a contribution template covering standing guidance, applicability, license, and public Git installation. Keep discovery lightweight for this release: README links to reviewed examples and explicit Git sources. A future community directory can index instruction packages and their provenance without hosting skills or becoming required for installation.
 
-Gate: fixture-based detection reports technologies and their workspace locations, deduplicates evidence, handles absent/malformed manifests with clear diagnostics, and leaves the fixture unchanged. Document the supported detection scope. A solo-developer fixture composes packages from two independent Git repositories without a profile or company configuration. Review example content for standing conventions; remove task tutorials and skill implementations.
+Gate: fixture-based detection reports technologies and their workspace locations, deduplicates evidence, handles absent/malformed manifests with clear diagnostics, and leaves the fixture unchanged. Document the supported detection scope. A solo-developer fixture composes packages from two independent Git repositories without a pack or company configuration. Review example content for standing conventions; remove task tutorials and skill implementations.
 
 ### Phase 7: Explicit exceptions and package constraints
 
@@ -213,13 +215,13 @@ Gate: missing requirements and declared conflicts prevent writes; unrelated outp
 
 Rewrite `SPEC.md` to match implemented contracts and remove contradictory scope/replacement rules. Update README with public community installation and company onboarding, mixed-stack composition, local additions, nested outputs, drift versus freshness, and migration examples. Explain the distinction between standing AGENTS.md guidance and task-specific skills, with examples. Link only to commands that exist. Retain simple install instructions.
 
-Run `npm run check`, `git diff --check`, and `npm pack --dry-run --json`. Run an end-to-end workflow through the built executable, including the company profile and mixed-stack examples. Verify npm package includes README and required runtime files. Do not publish.
+Run `npm run check`, `git diff --check`, and `npm pack --dry-run --json`. Run an end-to-end workflow through the built executable, including project/global pack installation and mixed-stack examples. Verify npm package includes README and required runtime files. Do not publish.
 
 Gate: a reader can follow documented commands in a fresh temporary repository, review an upstream update, and preserve project notes. Record tests, known limitations, and the final commit in the progress section.
 
 ## Suggested code ownership within this task
 
-Use `src/manifest.ts` for package decoding and new `src/config.ts` / `src/lock.ts` for consumer contracts. Keep `src/git.ts` responsible for transport and immutable snapshots, with `src/cache.ts` if needed. Put pure rendering in `src/compose.ts`, filesystem recovery in `src/transaction.ts`, orchestration in `src/project.ts` and `src/profile.ts`, and detection in `src/detect.ts`. Keep CLI parsing and human output in `src/cli.ts`.
+Use `src/manifest.ts` for package decoding and new `src/config.ts` / `src/lock.ts` for consumer contracts. Keep `src/git.ts` responsible for transport and immutable snapshots, with `src/cache.ts` if needed. Put pure rendering in `src/compose.ts`, filesystem recovery in `src/transaction.ts`, orchestration in `src/project.ts` and `src/pack.ts`, and detection in `src/detect.ts`. Keep CLI parsing and human output in `src/cli.ts`.
 
 These filenames are guidance, not a requirement to add pass-through modules. Test behaviour through the composer and public CLI; use failure injection at the filesystem seam to test recovery. Do not add unrelated frameworks or rewrite the project into a plugin architecture.
 
