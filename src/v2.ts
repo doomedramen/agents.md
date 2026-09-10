@@ -30,7 +30,7 @@ import {
   registeredAgents,
   userHome,
 } from "./paths.js";
-import { applyTransaction, recoverTransaction, sha256 as transactionSha256, type TransactionWrite } from "./transaction.js";
+import { applyTransaction, assertNoSymlinkPath, recoverTransaction, validateTransactionPlan, sha256 as transactionSha256, type TransactionWrite } from "./transaction.js";
 import type {
   ConsumerConfigV2,
   FragmentDeclaration,
@@ -120,6 +120,7 @@ interface RenderedState extends LoadedState {
 }
 
 interface ScopeRenderOptions extends V2CommandOptions {
+  dryRun?: boolean;
   localOverrides?: Map<string, Buffer>;
   previousLock?: V2LockFile;
   introducedBy?: Record<string, string | undefined>;
@@ -195,11 +196,13 @@ async function readBytes(path: string): Promise<Buffer | undefined> {
 }
 
 async function readConfig(paths: ScopePaths, global: boolean): Promise<ConsumerConfigV2> {
+  if ((await lstat(paths.configPath)).isSymbolicLink()) throw new Error(`Refusing symlink configuration: ${paths.configPath}`);
   const bytes = await readFile(paths.configPath, "utf8");
   return parseConsumerConfigBytes(bytes, global);
 }
 
 async function readLock(paths: ScopePaths): Promise<V2LockFile> {
+  if ((await lstat(paths.lockPath)).isSymbolicLink()) throw new Error(`Refusing symlink lockfile: ${paths.lockPath}`);
   const value = parse(await readFile(paths.lockPath, "utf8")) as unknown;
   if (!isRecord(value) || value.version !== 2) throw new Error(`${paths.lockPath}: lock version must be 2`);
   if (typeof value.rendererVersion !== "string" || typeof value.configSha256 !== "string" || !isRecord(value.packages) || !isRecord(value.packs) || !isRecord(value.localFiles) || !isRecord(value.generatedFiles) || !isRecord(value.ownership) || !isRecord(value.outputs)) {
@@ -497,6 +500,7 @@ async function localFragmentsFor(
   const hashes: Record<string, string> = {};
   for (const local of output.local) {
     const absolute = localAbsolutePath(paths, options, local);
+    await assertNoSymlinkPath(absolute, options.global ? paths.scopeRoot : options.projectRoot);
     const override = options.localOverrides?.get(local);
     const body = override ?? await readBytes(absolute);
     if (body === undefined) throw new Error(`Configured local fragment is missing: ${absolute}`);
@@ -851,13 +855,12 @@ export async function addV2(options: AddV2Options): Promise<{ ids: string[]; com
   }
   const state = await loadStateForSelections(nextConfig, oldLock, options, selectedPackages, selectedPacks);
   const rendered = await renderState(state, { ...options, previousLock: oldLock, localOverrides: localCreates, introducedBy });
-  if (options.dryRun) {
-    for (const selection of [...newPackages, ...newPacks]) console.log(`Would add ${selection.id}`);
-    return { ids: [...newPackages, ...newPacks].map((selection) => selection.id), commits: [...state.packages.values(), ...state.packs.values()].map((entry) => entry.commit) };
-  }
   const extraWrites: TransactionWrite[] = [];
   for (const [local, body] of localCreates) extraWrites.push({ path: localAbsolutePath(paths, options, local), contents: body, expectedSha256: null });
-  await writeRenderedState({ ...options, previousLock: oldLock }, rendered, extraWrites);
+  await writeRenderedState({ ...options, previousLock: oldLock, dryRun: Boolean(options.dryRun) }, rendered, extraWrites);
+  if (options.dryRun) {
+    for (const selection of [...newPackages, ...newPacks]) console.log(`Would add ${selection.id}`);
+  }
   return { ids: [...newPackages, ...newPacks].map((selection) => selection.id), commits: [...newPackages.map((selection) => state.packages.get(selection.id)?.commit ?? ""), ...newPacks.map((selection) => state.packs.get(selection.id)?.commit ?? "")] };
 }
 
@@ -892,11 +895,8 @@ export async function removeV2(options: V2CommandOptions & { ids: string[]; dryR
   nextConfig.outputs = nextConfig.outputs.filter((output) => !removedDirectories.has(output.directory));
   const state = await loadStateForSelections(nextConfig, oldLock, options, new Set(), new Set());
   const rendered = await renderState(state, { ...options, previousLock: oldLock });
-  if (options.dryRun) {
-    for (const id of options.ids) console.log(`Would remove ${id}`);
-    return options.ids;
-  }
-  await writeRenderedState({ ...options, previousLock: oldLock }, rendered);
+  await writeRenderedState({ ...options, previousLock: oldLock, dryRun: Boolean(options.dryRun) }, rendered);
+  if (options.dryRun) for (const id of options.ids) console.log(`Would remove ${id}`);
   return options.ids;
 }
 
@@ -927,7 +927,9 @@ export async function checkV2(options: V2CommandOptions): Promise<void> {
     throw checkFailure("Lock ownership differs from configuration; run agents.md render");
   }
   for (const [local, expected] of Object.entries(lock.localFiles)) {
-    const actual = await fileHash(localAbsolutePath(paths, options, local));
+    const absolute = localAbsolutePath(paths, options, local);
+    await assertNoSymlinkPath(absolute, options.global ? paths.scopeRoot : options.projectRoot);
+    const actual = await fileHash(absolute);
     if (actual !== expected) throw checkFailure(`Local fragment drift detected: ${local}; run agents.md edit or render`);
   }
   const renderedLocals = new Set(Object.values(rendered.outputLocks).flatMap((output) => output.local));
@@ -942,7 +944,9 @@ export async function checkV2(options: V2CommandOptions): Promise<void> {
     if (!locked || locked.sha256 !== sha256(generated.contents) || JSON.stringify(locked.owners) !== JSON.stringify(generated.owners) || JSON.stringify(lock.ownership[logical] ?? []) !== JSON.stringify(locked.owners)) {
       throw checkFailure(`Generated ownership differs from lock: ${logical}; run agents.md render`);
     }
-    const actual = await fileHash(logicalDestination(options, logical));
+    const destination = logicalDestination(options, logical);
+    await assertNoSymlinkPath(destination, options.global ? userHome() : options.projectRoot);
+    const actual = await fileHash(destination);
     if (actual !== sha256(generated.contents)) throw checkFailure(`Generated file drift detected: ${logical}; run agents.md render`);
   }
   if (JSON.stringify(lock.outputs) !== JSON.stringify(rendered.outputLocks)) {
@@ -993,7 +997,9 @@ export async function diffV2(options: ScopeRenderOptions & { update?: boolean })
   const rendered = await plannedRenderedForDiff(options, Boolean(options.update));
   const oldLock = rendered.lock;
   for (const [logical, generated] of rendered.generated) {
-    const current = await readBytes(logicalDestination(options, logical));
+    const destination = logicalDestination(options, logical);
+    await assertNoSymlinkPath(destination, options.global ? userHome() : options.projectRoot);
+    const current = await readBytes(destination);
     const diff = oneHunkDiff(current, generated.contents);
     if (diff) {
       console.log(`--- ${logical}`);
@@ -1140,16 +1146,13 @@ export async function updateV2(options: V2CommandOptions & { ids?: string[]; dry
     }
   }
   const rendered = await renderState(state, { ...options, previousLock: oldLock, localOverrides: reconciliation.localCreates, introducedBy: reconciliation.introducedBy });
-  if (options.dryRun) {
-    console.log(`Would update ${[...selected].join(", ")}`);
-    return;
-  }
   const extraWrites: TransactionWrite[] = [];
   for (const [local, body] of reconciliation.localCreates) {
     const absolute = localAbsolutePath(paths, options, local);
     if (!(await fileExists(absolute))) extraWrites.push({ path: absolute, contents: body, expectedSha256: null });
   }
-  await writeRenderedState({ ...options, previousLock: oldLock }, rendered, extraWrites);
+  await writeRenderedState({ ...options, previousLock: oldLock, dryRun: Boolean(options.dryRun) }, rendered, extraWrites);
+  if (options.dryRun) console.log(`Would update ${[...selected].join(", ")}`);
 }
 
 export async function outdatedV2(options: V2CommandOptions): Promise<boolean> {
@@ -1214,6 +1217,7 @@ export async function editV2(options: V2CommandOptions & { directory?: string })
   if (!output) throw new Error(`No configured output directory: ${directory}`);
   const local = output.local[0] ?? defaultLocal(directory, Boolean(options.global))[0];
   const absolute = localAbsolutePath(paths, options, local);
+  await assertNoSymlinkPath(absolute, options.global ? paths.scopeRoot : options.projectRoot);
   const editor = process.env.VISUAL || process.env.EDITOR;
   if (!editor) {
     console.log(`Edit ${absolute}, then run agents.md render`);
@@ -1323,15 +1327,12 @@ export async function migrateV1(options: V2CommandOptions & { dryRun?: boolean }
       ...(currentClaude ? { "CLAUDE.md": { sha256: sha256(currentClaude), owners: [], kind: "adapter" as const } } : {}),
     },
   };
-  if (options.dryRun) {
-    console.log("Would migrate legacy project state to v2");
-    return;
-  }
   const extra: TransactionWrite[] = [
     { path: paths.localPath, contents: Buffer.alloc(0), expectedSha256: null },
     { path: join(options.projectRoot, ".agents", "adopted", "AGENTS.md"), contents: currentAgents, expectedSha256: null },
   ];
-  await writeRenderedState({ ...options, previousLock: migrationOldLock }, rendered, extra);
+  await writeRenderedState({ ...options, previousLock: migrationOldLock, dryRun: Boolean(options.dryRun) }, rendered, extra);
+  if (options.dryRun) console.log("Would migrate legacy project state to v2");
 }
 
 
@@ -1401,13 +1402,15 @@ async function writeRenderedState(
   const lockBytes = Buffer.from(stringify(nextLock), "utf8");
   writes.push({ path: paths.configPath, contents: configBytes, expectedSha256: await fileHash(paths.configPath) });
   writes.push({ path: paths.lockPath, contents: lockBytes, expectedSha256: await fileHash(paths.lockPath) });
-  await applyTransaction({
+  const transaction = {
     writes,
     lockPath: paths.operationLock,
     journalPath: paths.journalPath,
     boundary: options.global ? userHome() : options.projectRoot,
     extraBoundaries: options.global ? [paths.scopeRoot] : undefined,
-  });
+  };
+  if (options.dryRun) await validateTransactionPlan(transaction);
+  else await applyTransaction(transaction);
   return nextLock;
 }
 
@@ -1558,10 +1561,6 @@ export async function initV2(options: V2CommandOptions & { adopt?: boolean; agen
   const rendered = emptyRendered(config, Boolean(options.global), localBody);
   const extraWrites: TransactionWrite[] = [{ path: localDestination, contents: localBody, expectedSha256: null }];
   if (options.adopt && adoptedSource !== undefined) extraWrites.push({ path: backupPath, contents: adoptedSource, expectedSha256: null });
-  if (options.dryRun) {
-    console.log(`Would initialize ${options.global ? "global" : "project"} scope`);
-    return { created: true, paths: [paths.configPath, paths.lockPath, localDestination] };
-  }
   const adoptionLock = emptyLock();
   if (options.adopt) {
     if (!options.global && localCanonical) adoptionLock.generatedFiles["AGENTS.md"] = { sha256: sha256(localCanonical), owners: [], kind: "agents" };
@@ -1580,6 +1579,10 @@ export async function initV2(options: V2CommandOptions & { adopt?: boolean; agen
       }
     }
   }
-  await writeRenderedState({ ...options, previousLock: adoptionLock }, rendered, extraWrites);
+  await writeRenderedState({ ...options, previousLock: adoptionLock, dryRun: Boolean(options.dryRun) }, rendered, extraWrites);
+  if (options.dryRun) {
+    console.log(`Would initialize ${options.global ? "global" : "project"} scope`);
+    return { created: true, paths: [paths.configPath, paths.lockPath, localDestination] };
+  }
   return { created: true, paths: [paths.configPath, paths.lockPath, localDestination] };
 }

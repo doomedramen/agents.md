@@ -63,6 +63,10 @@ async function ensureNoSymlinkAncestors(path: string, boundary: string): Promise
   }
 }
 
+export async function assertNoSymlinkPath(path: string, boundary: string): Promise<void> {
+  await ensureNoSymlinkAncestors(path, boundary);
+}
+
 async function currentHash(path: string): Promise<string | null> {
   try {
     const stat = await lstat(path);
@@ -156,44 +160,36 @@ export async function applyTransaction(options: {
   await recoverTransaction(options.journalPath);
   await acquireLock(options.lockPath);
   const boundaries = [options.boundary, ...(options.extraBoundaries ?? [])].map((value) => resolve(value));
-  const paths = new Set<string>();
   try {
-    for (const write of options.writes) {
-      const path = resolve(write.path);
-      const caseKey = path.toLowerCase();
-      if (paths.has(caseKey)) throw new Error(`Transaction contains duplicate destination: ${path}`);
-      paths.add(caseKey);
-      const boundary = boundaries.find((candidate) => {
-        const relation = relative(candidate, path);
-        return !relation.startsWith("..") && !isAbsolute(relation);
-      });
-      if (!boundary) throw new Error(`Transaction destination is outside allowed roots: ${path}`);
-      await ensureNoSymlinkAncestors(path, boundary);
-      const actual = await currentHash(path);
-      assertExpectedHash({ ...write, path }, actual);
-    }
+    await validateTransaction({ ...options, boundaries });
 
     const stageRoot = join(dirname(options.journalPath), `.transaction-${process.pid}-${Date.now()}`);
-    await mkdir(stageRoot, { recursive: true });
-    const records: JournalRecord[] = [];
-    for (let index = 0; index < options.writes.length; index += 1) {
-      const write = options.writes[index];
-      const path = resolve(write.path);
-      const backup = join(stageRoot, "backup", String(index));
-      const existed = (await currentHash(path)) !== null;
-      if (existed) {
-        await mkdir(dirname(backup), { recursive: true });
-        await copyFile(path, backup);
+    try {
+      await mkdir(stageRoot, { recursive: true });
+      const records: JournalRecord[] = [];
+      for (let index = 0; index < options.writes.length; index += 1) {
+        const write = options.writes[index];
+        const path = resolve(write.path);
+        const backup = join(stageRoot, "backup", String(index));
+        const existed = (await currentHash(path)) !== null;
+        if (existed) {
+          await mkdir(dirname(backup), { recursive: true });
+          await copyFile(path, backup);
+        }
+        if (write.contents !== undefined) {
+          const staged = join(stageRoot, "staged", String(index));
+          await mkdir(dirname(staged), { recursive: true });
+          await writeFile(staged, write.contents);
+        }
+        records.push({ path, existed, backup });
       }
-      if (write.contents !== undefined) {
-        const staged = join(stageRoot, "staged", String(index));
-        await mkdir(dirname(staged), { recursive: true });
-        await writeFile(staged, write.contents);
-      }
-      records.push({ path, existed, backup });
+      const journal: Journal = { lockPath: options.lockPath, stageRoot, records };
+      await writeJournal(options.journalPath, journal);
+    } catch (error) {
+      await rm(stageRoot, { recursive: true, force: true });
+      await rm(options.journalPath, { force: true });
+      throw error;
     }
-    const journal: Journal = { lockPath: options.lockPath, stageRoot, records };
-    await writeJournal(options.journalPath, journal);
 
     try {
       for (let index = 0; index < options.writes.length; index += 1) {
@@ -221,6 +217,38 @@ export async function applyTransaction(options: {
     activeLocks.delete(options.lockPath);
     await rm(options.lockPath, { force: true });
   }
+}
+
+async function validateTransaction(options: {
+  writes: TransactionWrite[];
+  boundary: string;
+  extraBoundaries?: string[];
+  boundaries?: string[];
+}): Promise<void> {
+  const boundaries = options.boundaries ?? [options.boundary, ...(options.extraBoundaries ?? [])].map((value) => resolve(value));
+  const paths = new Set<string>();
+  for (const write of options.writes) {
+    const path = resolve(write.path);
+    const caseKey = path.toLowerCase();
+    if (paths.has(caseKey)) throw new Error(`Transaction contains duplicate destination: ${path}`);
+    paths.add(caseKey);
+    const boundary = boundaries.find((candidate) => {
+      const relation = relative(candidate, path);
+      return !relation.startsWith("..") && !isAbsolute(relation);
+    });
+    if (!boundary) throw new Error(`Transaction destination is outside allowed roots: ${path}`);
+    await ensureNoSymlinkAncestors(path, boundary);
+    const actual = await currentHash(path);
+    assertExpectedHash({ ...write, path }, actual);
+  }
+}
+
+export async function validateTransactionPlan(options: {
+  writes: TransactionWrite[];
+  boundary: string;
+  extraBoundaries?: string[];
+}): Promise<void> {
+  await validateTransaction(options);
 }
 
 async function renameOrCopy(source: string, destination: string): Promise<void> {

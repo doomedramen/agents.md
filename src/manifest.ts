@@ -58,7 +58,7 @@ export function assertSafeRelativePath(value: unknown, field: string): string {
   ) {
     throw new Error(`${field} must be a safe relative path`);
   }
-  return normalizedSeparators;
+  return posix.normalize(normalizedSeparators);
 }
 
 export function assertSafeDirectoryPath(value: unknown, field: string): string {
@@ -284,6 +284,7 @@ function parsePackMember(raw: unknown, index: number): PackMemberDeclaration {
     id: requiredString(raw.id, `agents.yaml: packages[${index}].id`),
     source: requiredString(raw.source, `agents.yaml: packages[${index}].source`),
   };
+  if (!fragmentIdPattern.test(member.id)) throw new Error(`agents.yaml: packages[${index}].id must be a simple alias`);
   if (member.source.startsWith("/") || (!member.source.startsWith("./") && !member.source.startsWith("../") && member.source !== "." && !/^(?:github:|@|https?:\/\/|git@|file:\/\/)/.test(member.source))) {
     throw new Error(`agents.yaml: packages[${index}].source must be a Git source or explicit relative path`);
   }
@@ -340,6 +341,11 @@ export async function validateDeclaredSources(root: string, manifest: PackageMan
 
 export async function readPackageManifest(root: string): Promise<{ manifest: PackageManifestV1; bytes: Buffer }> {
   const manifestPath = join(root, "agent.yaml");
+  try {
+    if ((await lstat(manifestPath)).isSymbolicLink()) throw new Error(`Refusing symlink package manifest: ${manifestPath}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   let bytes: Buffer;
   try {
     bytes = await readFile(manifestPath);
@@ -353,9 +359,15 @@ export async function readPackageManifest(root: string): Promise<{ manifest: Pac
 }
 
 export async function readPackageDocument(root: string): Promise<{ kind: "package"; manifest: PackageManifest; bytes: Buffer }> {
+  const manifestPath = join(root, "agent.yaml");
+  try {
+    if ((await lstat(manifestPath)).isSymbolicLink()) throw new Error(`Refusing symlink package manifest: ${manifestPath}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   let bytes: Buffer;
   try {
-    bytes = await readFile(join(root, "agent.yaml"));
+    bytes = await readFile(manifestPath);
   } catch {
     throw new Error(`Package does not contain agent.yaml: ${root}`);
   }
@@ -383,6 +395,7 @@ export async function readSourceDocument(root: string): Promise<
   if (hasPackage && hasPack) throw new Error(`Ambiguous source directory contains both agent.yaml and agents.yaml: ${root}`);
   if (hasPackage) return readPackageDocument(root);
   if (hasPack) {
+    if ((await lstat(packPath)).isSymbolicLink()) throw new Error(`Refusing symlink pack manifest: ${packPath}`);
     const bytes = await readFile(packPath);
     return { kind: "pack", manifest: parsePackManifestBytes(bytes), bytes };
   }
@@ -481,6 +494,9 @@ function parseOutput(raw: unknown, index: number, global: boolean, aliases: Set<
   const adaptersRaw = raw.adapters === undefined ? (global ? undefined : ["claude-code"]) : raw.adapters;
   if (adaptersRaw !== undefined && (!Array.isArray(adaptersRaw) || adaptersRaw.some((value) => typeof value !== "string" || !knownAgents.has(value)))) {
     throw new Error(`agents.yaml: outputs[${index}].adapters contains an unknown agent`);
+  }
+  if (!global && Array.isArray(adaptersRaw) && adaptersRaw.some((value) => value !== "claude-code")) {
+    throw new Error(`agents.yaml: outputs[${index}].adapters has no renderer for the selected agent`);
   }
   return {
     directory: assertSafeDirectoryPath(raw.directory, `agents.yaml: outputs[${index}].directory`),

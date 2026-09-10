@@ -66,6 +66,7 @@ function validateRepositoryPath(packagePath: string): string {
 }
 
 async function assertNoEscapingPath(repositoryRoot: string, packageRoot: string, label: string): Promise<void> {
+  if ((await lstat(packageRoot)).isSymbolicLink()) throw new Error(`${label} is a symlink: ${packageRoot}`);
   const repositoryReal = await realpath(repositoryRoot);
   const packageReal = await realpath(packageRoot);
   if (packageReal !== repositoryReal && !packageReal.startsWith(`${repositoryReal}/`)) {
@@ -78,9 +79,11 @@ async function localSource(reference: string, cwd: string): Promise<{ source: So
   const candidate = resolve(cwd, sourcePath);
   try {
     await access(candidate);
-  } catch {
-    throw new Error(`Local Git source does not exist: ${sourcePath}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`Local Git source does not exist: ${sourcePath}`);
+    throw error;
   }
+  if ((await lstat(candidate)).isSymbolicLink()) throw new Error(`Local Git source is a symlink: ${sourcePath}`);
   const repositoryRoot = resolve(await git(["rev-parse", "--show-toplevel"], candidate));
   const repositoryReal = await realpath(repositoryRoot);
   await assertNoEscapingPath(repositoryRoot, candidate, "Local Git source");
