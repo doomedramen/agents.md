@@ -253,6 +253,63 @@ Package discovery searches documented conventional locations only. It must
 not recursively treat every `agent.yaml` in an arbitrary repository as a
 package.
 
+### Repository naming and folder structure
+
+The [skills.sh CLI documentation](https://www.skills.sh/docs/cli) is a useful
+reference for source naming and shallow repository discovery. It uses
+`owner/repo` as the source identity, supports direct paths into a repository,
+keeps machine-readable metadata beside each skill, and discovers content only
+inside known container directories. Agents should follow the same shape while
+keeping its own Git-native package contract.
+
+Recommended source repository:
+
+    agent-files/
+    ├── README.md
+    ├── LICENSE
+    ├── agents/
+    │   ├── base/
+    │   │   ├── agent.yaml
+    │   │   ├── AGENTS.md
+    │   │   └── README.md
+    │   └── nextjs/
+    │       ├── agent.yaml
+    │       ├── AGENTS.md
+    │       ├── CLAUDE.md
+    │       └── README.md
+    └── .github/
+        └── workflows/
+            └── validate.yml
+
+Naming rules:
+
+- Use the GitHub `owner/repo` as the primary source identity.
+- Use lowercase kebab-case for repository names, package directories, and
+  package slugs.
+- Give every package a short stable slug matching its directory where
+  practical.
+- Keep `agent.yaml` at package root beside the instruction files.
+- Put human documentation in the source repository `README.md` and, when a
+  repository contains multiple packages, in each package's `README.md`.
+- Use `agents/` as the preferred package container. Accept `packages/` as
+  an equivalent conventional container.
+- Permit a root package or one/two category levels below a known container,
+  such as `agents/nextjs/`, `agents/frontend/nextjs/`, or
+  `packages/frontend/web/nextjs/`.
+- Do not discover packages by default under `examples/`, `tests/`,
+  `vendor/`, generated output, or arbitrary deep paths.
+
+For GitHub sources, a stable display identifier should mirror the
+`owner/repo/package-slug` convention used by skills.sh. The exact source
+reference remains `github:owner/repo#package/path`, because the path is the
+unambiguous identity for installation. A curated registry alias such as
+`official/nextjs` may point to that source identifier but must not replace
+its provenance.
+
+The package manifest is the Agents equivalent of skills.sh's required
+machine-readable metadata. It should require `schema`, `name`, and
+`description`; `files` remains the authoritative installation list.
+
 ## 7. GitHub/Git storage model
 
 ### Package storage
