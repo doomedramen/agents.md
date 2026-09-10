@@ -1,0 +1,7 @@
+schema: 2
+name: mysql
+description: Standing conventions for MySQL-backed services
+fragments:
+  - id: persistence
+    source: persistence.md
+    title: MySQL persistence

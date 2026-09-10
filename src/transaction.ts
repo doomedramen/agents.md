@@ -81,6 +81,22 @@ export async function recoverTransaction(journalPath: string): Promise<void> {
   } catch (error) {
     throw new Error(`Recovery journal is unreadable: ${journalPath}: ${error instanceof Error ? error.message : String(error)}`);
   }
+  if (await exists(journal.lockPath)) {
+    try {
+      const pid = Number.parseInt((await readFile(journal.lockPath, "utf8")).trim(), 10);
+      if (Number.isInteger(pid) && pid !== process.pid) {
+        try {
+          process.kill(pid, 0);
+          throw new Error(`Another agents.md operation is already running: ${journal.lockPath}`);
+        } catch (error) {
+          if (error instanceof Error && error.message.startsWith("Another agents.md operation")) throw error;
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Another agents.md operation")) throw error;
+    }
+    await rm(journal.lockPath, { force: true });
+  }
   for (const record of [...journal.records].reverse()) {
     if (record.existed && (await exists(record.backup))) {
       await mkdir(dirname(record.path), { recursive: true });
@@ -123,8 +139,9 @@ export async function applyTransaction(options: {
   try {
     for (const write of options.writes) {
       const path = resolve(write.path);
-      if (paths.has(path)) throw new Error(`Transaction contains duplicate destination: ${path}`);
-      paths.add(path);
+      const caseKey = path.toLowerCase();
+      if (paths.has(caseKey)) throw new Error(`Transaction contains duplicate destination: ${path}`);
+      paths.add(caseKey);
       const boundary = boundaries.find((candidate) => {
         const relation = relative(candidate, path);
         return !relation.startsWith("..") && !isAbsolute(relation);

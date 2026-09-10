@@ -1,0 +1,7 @@
+schema: 2
+name: express
+description: Standing architectural conventions for Express services
+fragments:
+  - id: boundaries
+    source: boundaries.md
+    title: Express boundaries

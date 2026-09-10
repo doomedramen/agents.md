@@ -1,0 +1,7 @@
+schema: 2
+name: prisma
+description: Standing conventions for Prisma data access
+fragments:
+  - id: data-access
+    source: data-access.md
+    title: Prisma data access

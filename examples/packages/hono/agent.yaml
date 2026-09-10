@@ -1,0 +1,7 @@
+schema: 2
+name: hono
+description: Standing conventions for Hono services
+fragments:
+  - id: boundaries
+    source: boundaries.md
+    title: Hono boundaries

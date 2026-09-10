@@ -1,0 +1,20 @@
+version: 2
+kind: pack
+name: turborepo-stack
+packages:
+  - id: turborepo
+    source: ../../packages/turborepo
+  - id: nextjs
+    source: ../../packages/nextjs
+  - id: hono
+    source: ../../packages/hono
+outputs:
+  - directory: .
+    use: [turborepo]
+    exclude: []
+  - directory: apps/web
+    use: [nextjs]
+    exclude: []
+  - directory: apps/api
+    use: [hono]
+    exclude: []

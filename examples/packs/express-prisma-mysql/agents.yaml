@@ -1,0 +1,16 @@
+version: 2
+kind: pack
+name: express-prisma-mysql
+packages:
+  - id: typescript
+    source: ../../packages/typescript
+  - id: express
+    source: ../../packages/express
+  - id: prisma
+    source: ../../packages/prisma
+  - id: mysql
+    source: ../../packages/mysql
+outputs:
+  - directory: .
+    use: [typescript, express, prisma, mysql]
+    exclude: []

@@ -1,136 +1,191 @@
 # agents.md
 
-`agents.md` installs versioned coding-agent instructions from Git repositories.
-Package authors keep one canonical `AGENTS.md`, then declare each tool-specific
-destination in `agent.yaml`. The CLI records the source commit and installed file
-hashes in `agents.yaml` and `agents.lock`.
+`agents.md` composes reviewed, versioned `AGENTS.md` guidance from Git
+repositories. It gives solo developers and teams the same workflow. It stores
+standing rules and project context; task-specific skills remain separate and
+are never installed or inferred.
 
-## Requirements
+Requirements: Node.js 20+ and Git.
 
-- Node.js 20 or newer
-- Git
+## Personal project: public packages
 
-## Install a package
-
-Run `add` from the repository that should receive the instructions:
+Initialize a project, select public packages, add private local context, and
+review upstream changes:
 
 ```sh
-npx @doomedramen/agents.md add github:doomedramen/agent-packages#packages/project-typescript
+npx @doomedramen/agents.md init
+npx @doomedramen/agents.md add github:community/agent-rules#packages/typescript
+npx @doomedramen/agents.md add github:community/agent-rules#packages/express
+npx @doomedramen/agents.md edit
+npx @doomedramen/agents.md diff --update
+npx @doomedramen/agents.md update
+npx @doomedramen/agents.md check
 ```
 
-The CLI accepts GitHub shorthand, HTTPS URLs, and SSH URLs:
+The repository names above are walkthrough placeholders: replace them with
+Git sources you have reviewed. A local source uses an explicit path, for
+example `./examples/packages/typescript`; GitHub shorthand is not a local
+path. The equivalent executable invocation is `agents.md ...`.
+
+The default root output combines all selected fragments and
+`.agents/project.md` into one `AGENTS.md`. `CLAUDE.md` is exactly
+`@AGENTS.md\n`. Selecting Express, MySQL, TypeScript, and Prisma does not split
+one backend into four files.
+
+## Team project: shared conventions
+
+Teams publish ordinary Git packages or a pack from a private repository and
+review the consumer configuration and lockfile through Git:
 
 ```sh
-npx @doomedramen/agents.md add @acme/agent-files
-npx @doomedramen/agents.md add github:acme/agent-files#packages/nextjs
-npx @doomedramen/agents.md add https://github.com/acme/agent-files.git#packages/nextjs
-npx @doomedramen/agents.md add git@github.com:acme/agent-files.git
+agents.md init
+agents.md add github:your-team/agent-rules#packs/default
+agents.md edit
+agents.md check
 ```
 
-`@owner/repo` refers to a GitHub repository. The CLI checks out the repository;
-it does not install an npm dependency from that source.
+`your-team/agent-rules` is a placeholder, not a hosted service supplied by
+this project. A company baseline is optional. If CI must verify it, include the
+required package or pack in committed `agents.yaml`; global guidance cannot
+provide a repository guarantee.
 
-The package manifest controls installation scope. There are no `--project` or
-`--global` flags.
+## Monorepos
 
-## Package format
+Use separate outputs only where native agent loading needs separate directory
+guidance:
 
-Each package needs an `agent.yaml` manifest and at least one instruction file:
-
-```text
-my-agent-package/
-├── agent.yaml
-└── AGENTS.md
+```sh
+agents.md init
+agents.md add github:community/agent-rules#packages/turborepo
+agents.md add github:community/agent-rules#packages/nextjs --dir apps/web
+agents.md add github:community/agent-rules#packages/hono --dir apps/api
+agents.md edit --dir apps/web
+agents.md edit --dir apps/api
+agents.md check
 ```
 
-This manifest installs `AGENTS.md`, then writes `@AGENTS.md` into `CLAUDE.md`:
+This produces root, `apps/web`, and `apps/api` outputs. Root selections are not
+copied into nested outputs by default. Native agent loading decides which files
+are visible; agents.md does not claim universal precedence.
+
+## Configuration
 
 ```yaml
-schema: 1
-name: typescript-project
-description: Project instructions for TypeScript repositories
-canonical:
-  source: AGENTS.md
-files:
-  - source: AGENTS.md
-    targets:
-      - scope: project
-        path: AGENTS.md
-        mode: direct
-      - scope: project
-        agent: claude-code
-        path: CLAUDE.md
-        mode: import
-        import: AGENTS.md
+version: 2
+packages:
+  - id: typescript
+    source: github:acme/agent-rules#packages/typescript
+    ref: main
+packs: []
+outputs:
+  - directory: .
+    use: [typescript]
+    exclude: []
+    local: [.agents/project.md]
+    adapters: [claude-code]
 ```
 
-Use `mode: direct` to copy a file. For Claude Code, `mode: import` creates a
-one-line adapter:
+Packages provide fragments:
 
-```text
-@AGENTS.md
+```yaml
+schema: 2
+name: typescript
+description: TypeScript repository conventions
+fragments:
+  - id: boundaries
+    source: boundaries.md
+    title: Module boundaries
 ```
 
-Import targets require `canonical.source`. The installer writes regular files
-and rejects destination symlinks.
+Use `exclude: [typescript/boundaries]` to remove one recommendation and put a
+replacement in `.agents/project.md`. Pack exclusions use
+`pack/member/fragment`. Exclusions must name real selected fragments.
 
-Keep package paths relative to the package directory. The CLI rejects paths that
-escape their allowed root, duplicate destinations, and destination symlinks.
+Generated output has a stable notice and labelled sections. Markdown bodies keep
+their content with CRLF normalized to LF. Commit `agents.yaml`, `agents.lock`,
+generated instructions, and local inputs.
 
-## Installation scopes
+## Packs
 
-| Scope | Manifest fields | Example destination |
-| --- | --- | --- |
-| Project | `scope: project` | `./AGENTS.md` |
-| Global | `scope: global` and `agent` | `~/.codex/AGENTS.md` |
+A pack is a shareable Git recipe, not a skill bundle:
 
-A package can include project and global targets. The CLI updates state files for
-each scope used by the package.
+```yaml
+version: 2
+kind: pack
+name: express-prisma-mysql
+packages:
+  - id: typescript
+    source: ./packages/typescript
+  - id: express
+    source: ./packages/express
+outputs:
+  - directory: .
+    use: [typescript, express]
+    exclude: []
+```
 
-Global instructions affect every project that reads them. Review the source files
-before installing a global package:
+Relative members resolve from the recipe directory at its locked commit.
+External members can specify refs. Nested packs, scripts, credentials, and
+consumer local files are not allowed. Add a pack and a direct member together;
+removing the pack preserves the direct contribution.
+
+## Global guidance
+
+Global scope uses one composition and separate personal `local.md`:
 
 ```sh
-npx @doomedramen/agents.md add github:doomedramen/agent-packages#packages/global-baseline
+agents.md add github:your-team/agent-rules#packs/default --global --dry-run
+agents.md add github:your-team/agent-rules#packs/default --global
+agents.md edit --global
+agents.md check --global
+agents.md outdated --global
+agents.md diff --update --global
+agents.md update --global
 ```
 
-## Files written by `add`
+`init --global --agents claude-code,codex` selects registered destinations.
+Claude receives `AGENTS.md` plus exact `CLAUDE.md` import; Codex receives
+`AGENTS.md`. Existing guidance must be explicitly adopted/reconciled first.
+Tests can redirect home/config with `AGENTS_TEST_HOME` and
+`AGENTS_CONFIG_DIR`.
 
-For each declared target, `add`:
+## Drift and freshness
 
-1. Fetches the source repository and resolves a Git commit.
-2. Reads and validates `agent.yaml`.
-3. Replaces the destination file.
-4. Updates the matching manifest and lockfile with the source commit and hashes.
+`check` detects changed local inputs, generated files, adapters, missing files,
+and config/lock disagreement. It does not query moving remote refs. `outdated`
+does query requested refs and returns 1 when commits changed. `diff --update`
+previews current refs without consumer writes. `update` resolves and applies a
+recoverable transaction.
 
-`add` replaces files owned by the package. It does not merge Markdown or run
-package scripts.
+## Authoring and licensing
 
-## Reference packages
+Keep one fragment focused on one coherent convention. README files for example
+packages state intended audience, assumptions, exclusions, and source license.
+Use ordinary Git history to publish and review packages or packs; no account,
+private index, hosted registry, or organization profile is required. Do not
+copy task-specific skills into packages. Mention an existing skill only as
+prose when useful.
 
-The [agent-packages repository](https://github.com/doomedramen/agent-packages)
-contains working project and global packages:
+## Migration
 
-- [TypeScript project manifest](https://github.com/doomedramen/agent-packages/blob/main/packages/project-typescript/agent.yaml)
-- [TypeScript project instructions](https://github.com/doomedramen/agent-packages/blob/main/packages/project-typescript/AGENTS.md)
-- [Global baseline manifest](https://github.com/doomedramen/agent-packages/blob/main/packages/global-baseline/agent.yaml)
-- [Global baseline instructions](https://github.com/doomedramen/agent-packages/blob/main/packages/global-baseline/AGENTS.md)
+For a narrow schema 1 project, preview first:
+
+```sh
+agents.md migrate --dry-run
+agents.md migrate
+agents.md check
+```
+
+Multiple legacy owners, custom destinations, global state, mixed state, and
+edited generated files require manual reconciliation. Migration never guesses
+which overwritten legacy guidance a team intended to retain.
 
 ## Development
 
 ```sh
 npm install
 npm run check
-npm run build
+npm pack --dry-run --json
 ```
 
-Source code lives in [`src/`](src/). See [`SPEC.md`](SPEC.md) for the package
-format, security rules, state model, and planned Git-backed package index.
-
-## Further reading
-
-- [Codex `AGENTS.md` guidance](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
-- [Claude Code memory and imports](https://code.claude.com/docs/en/memory)
-- [OpenAI Codex instructions](https://github.com/openai/codex/blob/main/AGENTS.md)
-- [Vercel AI SDK instructions](https://github.com/vercel/ai/blob/main/AGENTS.md)
-- [WordPress Contributor Toolkit instructions](https://github.com/WordPress/contributor-toolkit/blob/trunk/AGENTS.md)
+No npm version bump or publish is part of this release.

@@ -475,13 +475,19 @@ function appendPackageFragments(
   contributionAlias: string,
   excludes: Set<string>,
   validExclusions: Set<string>,
+  selectionSets: Map<string, string>,
 ): void {
+  const identity = `${sourceIdentity(loaded.source)}@${loaded.commit}`;
+  const selected = loaded.fragments.filter((fragment) => !excludes.has(`${contributionAlias}/${fragment.id}`)).map((fragment) => fragment.id).sort().join("\0");
+  const previous = selectionSets.get(identity);
+  if (previous !== undefined && previous !== selected) throw new Error(`Conflicting fragment selections for source identity ${identity}`);
+  selectionSets.set(identity, selected);
   for (const fragment of loaded.fragments) {
     const exclusion = `${contributionAlias}/${fragment.id}`;
     validExclusions.add(exclusion);
     if (excludes.has(exclusion)) continue;
     target.push({
-      identity: `${sourceIdentity(loaded.source)}@${loaded.commit}`,
+      identity,
       label: `${contributionAlias}/${fragment.id} — ${fragment.title}`,
       alias: contributionAlias,
       fragmentId: fragment.id,
@@ -513,10 +519,11 @@ async function renderState(state: LoadedState, options: ScopeRenderOptions): Pro
     const fragments: FragmentProvenance[] = [];
     const excludes = new Set(output.exclude);
     const validExclusions = new Set<string>();
+    const selectionSets = new Map<string, string>();
     for (const alias of output.use) {
       const direct = state.packages.get(alias);
       if (direct) {
-        appendPackageFragments(fragments, direct, alias, excludes, validExclusions);
+        appendPackageFragments(fragments, direct, alias, excludes, validExclusions, selectionSets);
         continue;
       }
       const pack = state.packs.get(alias);
@@ -529,7 +536,7 @@ async function renderState(state: LoadedState, options: ScopeRenderOptions): Pro
       for (const memberId of recipeOutput.use) {
         const member = pack.members.get(memberId);
         if (!member) throw new Error(`Pack ${pack.id} lock is missing member: ${memberId}`);
-        appendPackageFragments(fragments, member, `${pack.id}/${memberId}`, excludes, validExclusions);
+        appendPackageFragments(fragments, member, `${pack.id}/${memberId}`, excludes, validExclusions, selectionSets);
       }
     }
     for (const exclusion of output.exclude) {
@@ -582,8 +589,8 @@ async function loadCurrentPackage(selection: V2PackageSelection, projectRoot: st
   const resolved = await resolveV2Source(selection.source, projectRoot, selection.ref);
   const document = await readResolvedSource(resolved);
   if (document.kind !== "package") throw new Error(`Source ${selection.id} is a pack; use pack selection`);
-  if (document.manifest.schema !== 2) throw new Error(`Schema 1 package ${selection.id} requires migrate before v2 installation`);
-  return loadPackageFromRoot(selection.id, resolved.source, resolved.commit, resolved.root, selection.ref ?? null);
+  if (document.manifest.schema !== 2 && !selection.compatibility) throw new Error(`Schema 1 package ${selection.id} requires migrate before v2 installation`);
+  return loadPackageFromRoot(selection.id, resolved.source, resolved.commit, resolved.root, selection.ref ?? null, undefined, selection.compatibility);
 }
 
 async function loadLockedPackage(selection: V2PackageSelection, locked: V2PackageLock, offline: boolean): Promise<LoadedPackage> {
@@ -686,7 +693,18 @@ export async function addV2(options: AddV2Options): Promise<{ ids: string[]; com
     const resolved = await resolveV2Source(reference, options.projectRoot, options.ref);
     const document = await readResolvedSource(resolved);
     const alias = options.id ?? document.manifest.name;
-    if (aliases.has(alias)) throw new Error(`Alias already exists: ${alias}; pass --id for a different alias`);
+    if (aliases.has(alias)) {
+      const existingPackage = nextConfig.packages.find((selection) => selection.id === alias);
+      const existingPack = nextConfig.packs.find((selection) => selection.id === alias);
+      const sameSelection = (existingPackage && document.kind === "package" && existingPackage.source === reference && (existingPackage.ref ?? null) === (options.ref ?? null)) ||
+        (existingPack && document.kind === "pack" && existingPack.source === reference && (existingPack.ref ?? null) === (options.ref ?? null) && existingPack.directory === directory);
+      if (!sameSelection) throw new Error(`Alias already exists: ${alias}; pass --id for a different alias`);
+      if (existingPackage) {
+        const outputInfo = ensureOutput(nextConfig, directory, Boolean(options.global));
+        addUnique(outputInfo.output.use, alias);
+      }
+      continue;
+    }
     aliases.add(alias);
     if (document.kind === "package") {
       if (document.manifest.schema !== 2) throw new Error(`Schema 1 source ${reference} requires migrate; v2 add will not write legacy targets`);
@@ -733,6 +751,12 @@ export async function addV2(options: AddV2Options): Promise<{ ids: string[]; com
       }
     }
     if (index < options.references.length - 1 && options.id) throw new Error("--id applies only to one source");
+  }
+  for (const output of nextConfig.outputs) {
+    for (const local of output.local) {
+      const absolute = localAbsolutePath(paths, options, local);
+      if (!(await fileExists(absolute)) && !localCreates.has(local)) localCreates.set(local, Buffer.alloc(0));
+    }
   }
   const state = await loadStateForSelections(nextConfig, oldLock, options, selectedPackages, selectedPacks);
   const rendered = await renderState(state, { ...options, previousLock: oldLock, localOverrides: localCreates, introducedBy });
@@ -788,7 +812,9 @@ export async function renderV2(options: ScopeRenderOptions): Promise<void> {
   const paths = scopePaths(options);
   await recoverTransaction(paths.journalPath);
   const lock = await readLock(paths);
-  const rendered = await renderLoadedState({ ...options, previousLock: lock });
+  const state = await loadLockedState({ ...options, previousLock: lock });
+  persistPackOmissions(state.config, lock);
+  const rendered = await renderState(state, { ...options, previousLock: lock });
   await writeRenderedState({ ...options, previousLock: lock }, rendered);
 }
 
@@ -898,13 +924,13 @@ async function assertFilteredUpdateStable(config: ConsumerConfigV2, lock: V2Lock
   }
 }
 
-function reconcilePackOutputs(
+async function reconcilePackOutputs(
   config: ConsumerConfigV2,
   oldConfig: ConsumerConfigV2,
   oldLock: V2LockFile,
   packs: Map<string, LoadedPack>,
   options: V2CommandOptions,
-): { localCreates: Map<string, Buffer>; introducedBy: Record<string, string | undefined> } {
+): Promise<{ localCreates: Map<string, Buffer>; introducedBy: Record<string, string | undefined> }> {
   const localCreates = new Map<string, Buffer>();
   const introducedBy: Record<string, string | undefined> = {};
   for (const [packId, pack] of packs) {
@@ -923,7 +949,7 @@ function reconcilePackOutputs(
         for (const local of output.local) localCreates.set(local, Buffer.alloc(0));
       }
       if (!output) continue;
-      const previousUse = oldConfig.outputs.find((candidate) => candidate.directory === targetDirectory)?.use.includes(packId) ?? false;
+      const previousUse = oldLock.outputs[targetDirectory]?.use.includes(packId) ?? oldConfig.outputs.find((candidate) => candidate.directory === targetDirectory)?.use.includes(packId) ?? false;
       if (previousUse && !output.use.includes(packId) && !selection.omitOutputs.includes(recipeOutput.directory)) {
         selection.omitOutputs.push(recipeOutput.directory);
       }
@@ -944,6 +970,15 @@ function reconcilePackOutputs(
       output.exclude = output.exclude.filter((exclusion) => !exclusion.startsWith(`${packId}/`));
     }
   }
+  const drop = new Set<string>();
+  for (const output of config.outputs) {
+    const oldOutput = oldLock.outputs[output.directory];
+    if (!oldOutput?.introducedBy || !packs.has(oldOutput.introducedBy) || output.use.length > 0 || output.directory === ".") continue;
+    if (output.local.length !== 1 || output.local[0] !== defaultLocal(output.directory, Boolean(options.global))[0]) continue;
+    const body = await readBytes(localAbsolutePath(scopePaths(options), options, output.local[0]));
+    if (body === undefined || body.length === 0) drop.add(output.directory);
+  }
+  config.outputs = config.outputs.filter((output) => !drop.has(output.directory));
   return { localCreates, introducedBy };
 }
 
@@ -960,7 +995,7 @@ export async function updateV2(options: V2CommandOptions & { ids?: string[]; dry
   const selectedPackages = new Set(nextConfig.packages.filter((selection) => selected.has(selection.id)).map((selection) => selection.id));
   const selectedPacks = new Set(nextConfig.packs.filter((selection) => selected.has(selection.id)).map((selection) => selection.id));
   const preliminary = await loadStateForSelections(nextConfig, oldLock, options, selectedPackages, selectedPacks);
-  const reconciliation = reconcilePackOutputs(nextConfig, oldConfig, oldLock, preliminary.packs, options);
+  const reconciliation = await reconcilePackOutputs(nextConfig, oldConfig, oldLock, preliminary.packs, options);
   const state = await loadStateForSelections(nextConfig, oldLock, options, selectedPackages, selectedPacks);
   const identities = new Map<string, { commit: string; selected: boolean; label: string }>();
   for (const selection of nextConfig.packages) {
@@ -1052,14 +1087,14 @@ export async function editV2(options: V2CommandOptions & { directory?: string })
   if (!output) throw new Error(`No configured output directory: ${directory}`);
   const local = output.local[0] ?? defaultLocal(directory, Boolean(options.global))[0];
   const absolute = localAbsolutePath(paths, options, local);
-  if (!(await fileExists(absolute))) {
-    await mkdir(dirname(absolute), { recursive: true });
-    await writeFile(absolute, "", "utf8");
-  }
   const editor = process.env.VISUAL ?? process.env.EDITOR;
   if (!editor) {
     console.log(`Edit ${absolute}, then run agents.md render`);
     return { path: absolute, edited: false };
+  }
+  if (!(await fileExists(absolute))) {
+    await mkdir(dirname(absolute), { recursive: true });
+    await writeFile(absolute, "", "utf8");
   }
   await runEditor(editor, absolute);
   await renderV2(options);
@@ -1069,6 +1104,10 @@ export async function editV2(options: V2CommandOptions & { directory?: string })
 function migratedSource(source: SourceDescriptor): string {
   const url = source.url.startsWith("/") ? `file://${source.url}` : source.url;
   return source.path === "." ? url : `${url}#${source.path}`;
+}
+
+function migratedDescriptor(source: SourceDescriptor): SourceDescriptor {
+  return source.url.startsWith("/") ? { ...source, url: `file://${source.url}` } : source;
 }
 
 function parseLegacyState(value: unknown, path: string): StateFile {
@@ -1085,7 +1124,10 @@ export async function migrateV1(options: V2CommandOptions & { dryRun?: boolean }
   if (options.global) throw new Error("Global legacy migration is unsupported; create a global v2 scope and adopt guidance manually");
   const oldPaths = legacyPaths(options);
   const paths = scopePaths(options);
-  if (await fileExists(paths.configPath)) throw new Error("Project already has a v2 agents.yaml");
+  if (await fileExists(paths.configPath)) {
+    const existing = parse(await readFile(paths.configPath, "utf8")) as unknown;
+    if (isRecord(existing) && existing.version === 2) throw new Error("Project already has a v2 agents.yaml");
+  }
   if (!(await fileExists(oldPaths.state)) || !(await fileExists(oldPaths.lock))) throw new Error("No complete legacy project state found to migrate");
   const state = parseLegacyState(parse(await readFile(oldPaths.state, "utf8")), oldPaths.state);
   const oldLock = parseLegacyLock(parse(await readFile(oldPaths.lock, "utf8")), oldPaths.lock);
@@ -1119,7 +1161,7 @@ export async function migrateV1(options: V2CommandOptions & { dryRun?: boolean }
     packages.push({ id: reference.id, source: migratedSource(locked.source) });
     packageLocks[reference.id] = {
       id: reference.id,
-      source: locked.source,
+      source: migratedDescriptor(locked.source),
       requestedRef: null,
       commit: locked.commit,
       manifestSha256: locked.manifestSha256,
@@ -1151,7 +1193,7 @@ export async function migrateV1(options: V2CommandOptions & { dryRun?: boolean }
     ...emptyLock(),
     generatedFiles: {
       "AGENTS.md": { sha256: sha256(currentAgents), owners: [], kind: "agents" },
-      "CLAUDE.md": { sha256: currentClaude ? sha256(currentClaude) : sha256(renderClaudeAdapter()), owners: [], kind: "adapter" },
+      ...(currentClaude ? { "CLAUDE.md": { sha256: sha256(currentClaude), owners: [], kind: "adapter" as const } } : {}),
     },
   };
   if (options.dryRun) {
@@ -1240,6 +1282,21 @@ async function writeRenderedState(
     extraBoundaries: options.global ? [paths.scopeRoot] : undefined,
   });
   return nextLock;
+}
+
+function persistPackOmissions(config: ConsumerConfigV2, lock: V2LockFile): void {
+  for (const selection of config.packs) {
+    const pack = lock.packs[selection.id];
+    if (!pack) continue;
+    for (const recipeOutput of pack.outputs) {
+      const targetDirectory = mountedOutputDirectory(selection.directory, recipeOutput.directory);
+      const current = config.outputs.find((output) => output.directory === targetDirectory);
+      const wasSelected = lock.outputs[targetDirectory]?.use.includes(selection.id) ?? false;
+      if (wasSelected && (!current || !current.use.includes(selection.id)) && !selection.omitOutputs.includes(recipeOutput.directory)) {
+        selection.omitOutputs.push(recipeOutput.directory);
+      }
+    }
+  }
 }
 
 async function checkExistingGenerated(oldLock: V2LockFile, options: V2CommandOptions): Promise<void> {
@@ -1340,7 +1397,8 @@ export async function initV2(options: V2CommandOptions & { adopt?: boolean; agen
   const localDestination = paths.localPath;
   if (await fileExists(localDestination)) throw new Error(`Refusing pre-existing local destination: ${localDestination}`);
   const localCanonical = options.global ? undefined : await existingCanonical(join(options.projectRoot, "AGENTS.md"));
-  const localBody = localCanonical ?? Buffer.alloc(0);
+  let localBody = localCanonical ?? Buffer.alloc(0);
+  let adoptedSource: Buffer | undefined = localCanonical;
   const backupPath = options.global ? join(paths.scopeRoot, "adopted", "AGENTS.md") : join(options.projectRoot, ".agents", "adopted", "AGENTS.md");
   if (!options.adopt && localCanonical !== undefined) throw new Error(`Existing AGENTS.md requires init --adopt: ${join(options.projectRoot, "AGENTS.md")}`);
   if (!options.global) {
@@ -1363,16 +1421,35 @@ export async function initV2(options: V2CommandOptions & { adopt?: boolean; agen
       const first = canonicalBytes[0];
       if (canonicalBytes.some((bytes) => !bytes.equals(first))) throw new Error("Existing global canonical files differ; reconcile them before init --global --adopt");
       if (!options.adopt) throw new Error("Existing global guidance requires init --global --adopt");
-      if (!first.equals(localBody)) throw new Error("Existing global canonical files differ from adoption source");
+      localBody = first;
+      adoptedSource = first;
     }
   }
   const rendered = emptyRendered(config, Boolean(options.global), localBody);
   const extraWrites: TransactionWrite[] = [{ path: localDestination, contents: localBody, expectedSha256: null }];
-  if (options.adopt && localCanonical !== undefined) extraWrites.push({ path: backupPath, contents: localCanonical, expectedSha256: null });
+  if (options.adopt && adoptedSource !== undefined) extraWrites.push({ path: backupPath, contents: adoptedSource, expectedSha256: null });
   if (options.dryRun) {
     console.log(`Would initialize ${options.global ? "global" : "project"} scope`);
     return { created: true, paths: [paths.configPath, paths.lockPath, localDestination] };
   }
-  await writeRenderedState({ ...options, previousLock: emptyLock() }, rendered, extraWrites);
+  const adoptionLock = emptyLock();
+  if (options.adopt) {
+    if (!options.global && localCanonical) adoptionLock.generatedFiles["AGENTS.md"] = { sha256: sha256(localCanonical), owners: [], kind: "agents" };
+    if (!options.global) {
+      const claude = await existingCanonical(join(options.projectRoot, "CLAUDE.md"));
+      if (claude) adoptionLock.generatedFiles["CLAUDE.md"] = { sha256: sha256(claude), owners: [], kind: "adapter" };
+    } else {
+      for (const agent of config.agents ?? ["claude-code"]) {
+        const canonical = await existingCanonical(globalCanonicalPath(agent));
+        if (canonical) adoptionLock.generatedFiles[`${agent}/AGENTS.md`] = { sha256: sha256(canonical), owners: [], kind: "agents" };
+        const adapter = globalAdapterPath(agent);
+        if (adapter) {
+          const adapterBytes = await existingCanonical(adapter);
+          if (adapterBytes) adoptionLock.generatedFiles[`${agent}/CLAUDE.md`] = { sha256: sha256(adapterBytes), owners: [], kind: "adapter" };
+        }
+      }
+    }
+  }
+  await writeRenderedState({ ...options, previousLock: adoptionLock }, rendered, extraWrites);
   return { created: true, paths: [paths.configPath, paths.lockPath, localDestination] };
 }

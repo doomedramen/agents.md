@@ -108,6 +108,26 @@ function agentsValue(parsed: Parsed): string[] | undefined {
   return value === undefined ? undefined : value.split(",").map((agent) => agent.trim()).filter(Boolean);
 }
 
+function validateCommandOptions(command: string, parsed: Parsed): void {
+  const allowed: Record<string, { flags: string[]; values: string[] }> = {
+    init: { flags: ["global", "dry-run", "adopt"], values: ["agents"] },
+    add: { flags: ["global", "dry-run"], values: ["ref", "dir", "id", "agents"] },
+    remove: { flags: ["global", "dry-run"], values: [] },
+    render: { flags: ["global", "offline"], values: [] },
+    diff: { flags: ["global", "update"], values: [] },
+    update: { flags: ["global", "dry-run", "offline"], values: [] },
+    outdated: { flags: ["global"], values: [] },
+    check: { flags: ["global", "offline"], values: [] },
+    detect: { flags: [], values: [] },
+    edit: { flags: ["global"], values: ["dir"] },
+    migrate: { flags: ["dry-run"], values: [] },
+  };
+  const rule = allowed[command];
+  if (!rule) return;
+  for (const flag of parsed.flags) if (flag !== "help" && !rule.flags.includes(flag)) throw new UsageError(`Unknown option for ${command}: --${flag}`);
+  for (const value of parsed.values.keys()) if (!rule.values.includes(value)) throw new UsageError(`Unknown option for ${command}: --${value}`);
+}
+
 async function v2ConfigExists(projectRoot: string, global: boolean): Promise<boolean> {
   const path = global ? `${globalConfigDirectory()}/agents.yaml` : `${projectRoot}/agents.yaml`;
   try {
@@ -145,7 +165,7 @@ async function handleAdd(parsed: Parsed, projectRoot: string): Promise<void> {
   if (hasV1) {
     if (ref !== undefined) throw new UsageError("--ref is only supported for schema 2 sources");
     if (alreadyV2) throw new UsageError("Schema 1 sources cannot be added to a v2 scope; run migrate or use a schema 2 package");
-    if (global && await v2ConfigExists(projectRoot, true)) throw new UsageError("Legacy operation overlaps an existing v2 global installation");
+    if (await v2ConfigExists(projectRoot, true)) throw new UsageError("Legacy operation overlaps an existing v2 global installation");
     if (id !== undefined || directory !== undefined || global) throw new UsageError("Legacy schema 1 add does not support v2 selection options");
     for (const reference of parsed.positional) {
       const result = await addPackage(reference, resolve(projectRoot));
@@ -180,6 +200,7 @@ async function main(argv: string[]): Promise<void> {
   const commonFlags = new Set(["--global", "--dry-run", "--offline", "--adopt", "--update"]);
   const commonValues = new Set(["--ref", "--dir", "--id", "--agents"]);
   const parsed = parseArgs(args, commonFlags, commonValues);
+  validateCommandOptions(command, parsed);
   if (hasFlag(parsed, "help")) {
     console.log(commandHelp(command));
     return;

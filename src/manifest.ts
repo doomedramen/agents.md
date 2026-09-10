@@ -87,6 +87,7 @@ export function assertSafeDirectoryPath(value: unknown, field: string): string {
 export function assertValidRef(value: unknown, field: string): string {
   const ref = requiredString(value, field);
   if (
+    !/^[A-Za-z0-9][A-Za-z0-9._/@+\-]*$/.test(ref) ||
     ref.startsWith("-") ||
     /\s/.test(ref) ||
     ref.includes("..") ||
@@ -285,7 +286,7 @@ function parsePackMember(raw: unknown, index: number): PackMemberDeclaration {
     id: requiredString(raw.id, `agents.yaml: packages[${index}].id`),
     source: requiredString(raw.source, `agents.yaml: packages[${index}].source`),
   };
-  if (member.source.startsWith("/") || (!member.source.startsWith("./") && !member.source.startsWith("../") && member.source.includes("#") === false && !/^(?:github:|@|https?:\/\/|git@|file:\/\/)/.test(member.source))) {
+  if (member.source.startsWith("/") || (!member.source.startsWith("./") && !member.source.startsWith("../") && member.source !== "." && !/^(?:github:|@|https?:\/\/|git@|file:\/\/)/.test(member.source))) {
     throw new Error(`agents.yaml: packages[${index}].source must be a Git source or explicit relative path`);
   }
   if (raw.ref !== undefined) member.ref = assertValidRef(raw.ref, `agents.yaml: packages[${index}].ref`);
@@ -518,6 +519,15 @@ export function parseConsumerConfigBytes(bytes: Buffer | string, global = false)
     const key = output.directory.toLowerCase();
     if (outputDirs.has(key)) throw new Error(`agents.yaml: duplicate output directory: ${output.directory}`);
     outputDirs.add(key);
+    const generated = new Set<string>([
+      output.directory === "." ? "AGENTS.md" : `${output.directory}/AGENTS.md`,
+      ...(output.adapters?.includes("claude-code") ? [output.directory === "." ? "CLAUDE.md" : `${output.directory}/CLAUDE.md`] : []),
+    ]);
+    for (const local of output.local) {
+      if (generated.has(local)) throw new Error(`agents.yaml: output ${output.directory} local overlaps generated file: ${local}`);
+      if (!global && (local === "agents.yaml" || local === "agents.lock")) throw new Error(`agents.yaml: local input overlaps state file: ${local}`);
+      if (global && (local === "agents.yaml" || local === "agents.lock")) throw new Error(`agents.yaml: global local input overlaps state file: ${local}`);
+    }
   }
   if (global && outputs.some((output) => output.directory !== ".")) {
     throw new Error("agents.yaml: global scope permits only output directory .");

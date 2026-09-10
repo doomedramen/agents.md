@@ -1,0 +1,7 @@
+schema: 2
+name: nextjs
+description: Standing conventions for Next.js applications
+fragments:
+  - id: boundaries
+    source: boundaries.md
+    title: Next.js boundaries

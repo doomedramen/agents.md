@@ -1,0 +1,7 @@
+schema: 2
+name: turborepo
+description: Standing conventions for Turborepo workspaces
+fragments:
+  - id: boundaries
+    source: boundaries.md
+    title: Workspace boundaries

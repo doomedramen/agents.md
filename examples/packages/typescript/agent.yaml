@@ -1,0 +1,7 @@
+schema: 2
+name: typescript
+description: Standing conventions for TypeScript repositories
+fragments:
+  - id: conventions
+    source: conventions.md
+    title: TypeScript conventions
