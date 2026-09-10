@@ -2,10 +2,11 @@
 
 Git-native package manager for AI coding-agent instruction files.
 
-The CLI is distributed through npm:
+The CLI is distributed through npm as `agentfiles`. Its installed executable
+remains `agents.md`.
 
 ```sh
-npx agents.md add @doomedramen/agents-nextjs
+npx agentfiles add @doomedramen/agents-nextjs
 ```
 
 `@owner/repo` is parsed as a GitHub source reference. The package's

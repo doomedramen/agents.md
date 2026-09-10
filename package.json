@@ -1,5 +1,5 @@
 {
-  "name": "agents.md",
+  "name": "agentfiles",
   "version": "0.1.0",
   "description": "Git-native package manager for AI coding-agent instructions",
   "type": "module",

@@ -73,7 +73,7 @@ The product should feel like a conventional developer package manager:
     Agent package
           |
           v
-    npx agents.md add
+    npx agentfiles add
           |
           v
     Project instruction files
@@ -365,20 +365,21 @@ they do not declare executable hooks.
 
 Supported source forms:
 
-    npx agents.md add official/nextjs
-    npx agents.md add @acme/agent-files
-    npx agents.md add github:acme/agent-files#packages/nextjs
-    npx agents.md add https://github.com/acme/agent-files.git#packages/nextjs
-    npx agents.md add git@github.com:acme/agent-files.git#packages/nextjs
-    npx agents.md add ../local-agent-files/nextjs
+    npx agentfiles add official/nextjs
+    npx agentfiles add @acme/agent-files
+    npx agentfiles add github:acme/agent-files#packages/nextjs
+    npx agentfiles add https://github.com/acme/agent-files.git#packages/nextjs
+    npx agentfiles add git@github.com:acme/agent-files.git#packages/nextjs
+    npx agentfiles add ../local-agent-files/nextjs
 
 `@owner/repo` is an Agents GitHub shorthand. In this example:
 
-    npx agents.md add @doomedramen/agents-nextjs
+    npx agentfiles add @doomedramen/agents-nextjs
 
-`npx` resolves only the `agents.md` CLI package; the CLI resolves
-`@doomedramen/agents-nextjs` as a GitHub source and must never treat it as an
-npm dependency. A source reference must unambiguously identify:
+`npx` resolves only the `agentfiles` CLI package; its executable is named
+`agents.md`. The CLI resolves `@doomedramen/agents-nextjs` as a GitHub source
+and must never treat it as an npm dependency. A source reference must
+unambiguously identify:
 
 - Git repository URL
 - package subdirectory, if any
@@ -632,7 +633,7 @@ reproducible from an index commit.
 
     mkdir my-app
     cd my-app
-    npx agents.md add official/nextjs
+    npx agentfiles add official/nextjs
 
 Agents:
 
@@ -651,7 +652,7 @@ Agents:
 Global state is separate from project state, but the package manifest decides
 which state it uses:
 
-    npx agents.md add @acme/agent-standards
+    npx agentfiles add @acme/agent-standards
 
 If `agent.yaml` declares both project and global targets, `add` records the
 same source in both `agents.yaml` and `global.yaml`, and writes both sets of
@@ -663,8 +664,8 @@ flag to override package metadata.
 
 The public index is optional:
 
-    npx agents.md add github:acme/agent-files#packages/nextjs
-    npx agents.md add git@github.com:acme/agent-files.git
+    npx agentfiles add github:acme/agent-files#packages/nextjs
+    npx agentfiles add git@github.com:acme/agent-files.git
 
 Existing Git authentication must be used. Agents does not create a separate
 GitHub account or credential system.
@@ -679,10 +680,11 @@ workflows.
 
 ## 10. CLI
 
-The CLI is distributed as the npm package `agents.md`. Its primary
+The CLI is distributed as the unscoped npm package `agentfiles`. The requested
+name `agents.md` is blocked by npm's package-similarity policy. Its primary
 invocation is:
 
-    npx agents.md <command> [arguments]
+    npx agentfiles <command> [arguments]
 
 The package exposes an `agents.md` executable through npm's `bin` field. A
 local project may install it as a dev dependency for faster repeat use, but
@@ -691,26 +693,26 @@ in Git repositories.
 
 Initial command:
 
-    npx agents.md add <source>
+    npx agentfiles add <source>
 
 Potential later commands:
 
-    npx agents.md install
-    npx agents.md remove
-    npx agents.md update
-    npx agents.md outdated
-    npx agents.md diff
-    npx agents.md list
-    npx agents.md targets
-    npx agents.md search
-    npx agents.md info
-    npx agents.md check
-    npx agents.md publish
-    npx agents.md validate
-    npx agents.md doctor
-    npx agents.md trust
-    npx agents.md pin
-    npx agents.md clean
+    npx agentfiles install
+    npx agentfiles remove
+    npx agentfiles update
+    npx agentfiles outdated
+    npx agentfiles diff
+    npx agentfiles list
+    npx agentfiles targets
+    npx agentfiles search
+    npx agentfiles info
+    npx agentfiles check
+    npx agentfiles publish
+    npx agentfiles validate
+    npx agentfiles doctor
+    npx agentfiles trust
+    npx agentfiles pin
+    npx agentfiles clean
 
 Scope is not a CLI selection. The installed package's `agent.yaml` declares
 the scope and agent for every target. `agents.md add` routes project targets
@@ -722,11 +724,11 @@ is no `--scope` or `--global` target-selection flag.
 
 Examples:
 
-    npx agents.md add official/nextjs
-    npx agents.md add acme/agents#packages/base
-    npx agents.md add https://github.com/acme/agents.git#packages/base
-    npx agents.md add ./agent-packages/base
-    npx agents.md add @acme/agent-standards
+    npx agentfiles add official/nextjs
+    npx agentfiles add acme/agents#packages/base
+    npx agentfiles add https://github.com/acme/agents.git#packages/base
+    npx agentfiles add ./agent-packages/base
+    npx agentfiles add @acme/agent-standards
 
 The command resolves, validates, and replaces package-declared files. It
 writes each target according to the scope and agent declared in the package's
@@ -1029,8 +1031,8 @@ Authors may use tags:
 
 Examples:
 
-    npx agents.md add official/nextjs@v1.4.0
-    npx agents.md add official/nextjs@main
+    npx agentfiles add official/nextjs@v1.4.0
+    npx agentfiles add official/nextjs@main
 
 Both resolve to a full commit in `agents.lock`. Semver range resolution may
 be added later; it must always end at an immutable commit.
@@ -1064,7 +1066,7 @@ HTTP API is not part of the core architecture.
 
 Private organisations can use the CLI without the public index:
 
-    npx agents.md add git@github.com:my-company/agent-standards.git#base
+    npx agentfiles add git@github.com:my-company/agent-standards.git#base
 
 They may also maintain a private index repository:
 
@@ -1117,7 +1119,7 @@ Possible recommendations:
     Playwright
 
     Recommended:
-      npx agents.md add official/nextjs official/typescript official/prisma official/playwright
+      npx agentfiles add official/nextjs official/typescript official/prisma official/playwright
 
 ## 22. Git and CI integration
 
@@ -1185,7 +1187,9 @@ There is no required registry backend between the CLI and Git repositories.
 
 ## 24. Language and portability
 
-The CLI is written in TypeScript and published to npm as `agents.md`.
+The CLI is written in TypeScript and published to npm as the unscoped package
+`agentfiles`. npm's package-similarity policy blocks the requested short name
+`agents.md` because it is too similar to the existing `agents-md` package.
 
 The package must:
 
@@ -1198,7 +1202,7 @@ The package must:
 
 The canonical invocation is:
 
-    npx agents.md add @doomedramen/agents-nextjs
+    npx agentfiles add @doomedramen/agents-nextjs
 
 The `@owner/repo` argument is parsed by the CLI as a GitHub source shorthand;
 it is not an npm package dependency. A local installation may invoke the same
@@ -1207,7 +1211,7 @@ binary as `agents.md` without `npx`.
 Minimum npm package metadata:
 
     {
-      "name": "agents.md",
+      "name": "agentfiles",
       "type": "module",
       "bin": {
         "agents.md": "dist/cli.js"
@@ -1307,7 +1311,7 @@ The first usable version must support:
 
 ### Commands
 
-    npx agents.md add <source>
+    npx agentfiles add <source>
 
 ### Required behavior
 
@@ -1367,7 +1371,7 @@ The first milestone is complete when this works:
     git init demo
     cd demo
 
-    npx agents.md add @doomedramen/agents-nextjs
+    npx agentfiles add @doomedramen/agents-nextjs
 
 and produces:
 
@@ -1385,7 +1389,7 @@ the lockfile.
 
 Global installation must also work independently:
 
-    npx agents.md add @acme/global-agent-standards
+    npx agentfiles add @acme/global-agent-standards
 
 When that package's `agent.yaml` declares only a Codex global target, this
 must write only to the configured Codex global target, record the resolved
@@ -1410,7 +1414,7 @@ Expanded description:
 
 > Install, share, version, and sync `AGENTS.md`, generated `CLAUDE.md` import
 > adapters, Cursor rules, Copilot instructions, and other coding-agent
-> configuration directly from Git repositories with `npx agents.md`.
+> configuration directly from Git repositories with `npx agentfiles`.
 
 The conceptual comparison is:
 
