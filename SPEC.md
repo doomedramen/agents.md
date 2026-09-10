@@ -42,6 +42,9 @@ This section is normative.
 7. A project must remain usable when the Agents CLI or public index is
    unavailable. Committed instruction files and `agents.lock` provide this
    guarantee.
+8. Package metadata, not CLI flags, declares whether each file belongs to
+   project scope, global scope, or both. Agent-specific entrypoints are
+   generated adapters over canonical content whenever the target supports it.
 
 The term “registry” describes the discovery experience. Its durable state is
 Git repositories.
@@ -70,7 +73,7 @@ The product should feel like a conventional developer package manager:
     Agent package
           |
           v
-    agents add
+    npx agents.md add
           |
           v
     Project instruction files
@@ -105,7 +108,8 @@ Example:
     nextjs/
     ├── agent.yaml
     ├── AGENTS.md
-    ├── CLAUDE.md
+    ├── adapters/
+    │   └── claude-code.md
     ├── .cursor/
     │   └── rules/
     │       └── nextjs.mdc
@@ -138,9 +142,10 @@ repositories. It is not a separate content-hosting or database service.
 
 ### Project manifest
 
-`agents.yaml` declares project-scope packages and records enough source
+`agents.yaml` records package requests with project targets and enough source
 information to install them without resolving the short name again. Global
-scope uses a separate user manifest.
+targets use a separate user manifest. The package's `agent.yaml`, not either
+consumer manifest, is authoritative for target scope.
 
 ### Lockfile
 
@@ -160,8 +165,10 @@ Agents has two installation scopes:
 - `project`: files available inside one consuming repository
 - `global`: files available across projects for one user and agent
 
-Project scope is the default. Global scope always requires an explicit
-selection.
+Scope is declared by the package's `agent.yaml`. The CLI must not require a
+scope flag to decide where a declared file belongs. A package that declares
+both scopes updates both scope-specific state files; a package that needs
+independent user choice should publish separate package entries.
 
 ### Agent target
 
@@ -203,7 +210,7 @@ Minimum package layout:
     repo/
     ├── agent.yaml
     ├── AGENTS.md
-    └── CLAUDE.md
+    └── README.md
 
 Multi-package repositories are supported:
 
@@ -214,7 +221,7 @@ Multi-package repositories are supported:
     │   │   └── AGENTS.md
     │   └── nextjs/
     │       ├── agent.yaml
-    │       └── CLAUDE.md
+    │       └── AGENTS.md
     └── README.md
 
 Suggested manifest:
@@ -223,11 +230,38 @@ Suggested manifest:
     name: nextjs
     description: Agent instructions for Next.js projects
 
+    canonical:
+      source: AGENTS.md
+
     files:
-      - AGENTS.md
-      - CLAUDE.md
-      - .cursor/rules/nextjs.mdc
-      - .github/copilot-instructions.md
+      - source: AGENTS.md
+        targets:
+          - scope: project
+            path: AGENTS.md
+            mode: direct
+          - scope: project
+            agent: claude-code
+            path: CLAUDE.md
+            mode: import
+            import: AGENTS.md
+      - source: .cursor/rules/nextjs.mdc
+        targets:
+          - scope: project
+            agent: cursor
+            path: .cursor/rules/nextjs.mdc
+            mode: direct
+      - source: .github/copilot-instructions.md
+        targets:
+          - scope: project
+            agent: github-copilot
+            path: .github/copilot-instructions.md
+            mode: direct
+      - source: adapters/claude-code.md
+        targets:
+          - scope: project
+            agent: claude-code
+            path: .claude/rules/nextjs.md
+            mode: direct
 
     tags:
       - nextjs
@@ -253,40 +287,76 @@ Optional metadata:
 ### Scope-aware files
 
 The scalar `files` form is shorthand for project-scope files whose source
-path and destination path are identical. Packages that serve global and
-project installations use explicit targets:
+path and destination path are identical. Scope is package metadata, not a
+CLI option. Packages that serve global and project installations use explicit
+targets in `agent.yaml`:
 
     schema: 1
     name: base
     description: Shared coding-agent instructions
 
+    canonical:
+      source: AGENTS.md
+
     files:
-      - source: project/AGENTS.md
+      - source: AGENTS.md
         targets:
           - scope: project
             path: AGENTS.md
+            mode: direct
 
-      - source: global/codex/AGENTS.md
-        targets:
+          - scope: project
+            agent: claude-code
+            path: CLAUDE.md
+            mode: import
+            import: AGENTS.md
           - scope: global
             agent: codex
             path: AGENTS.md
-
-      - source: global/claude/CLAUDE.md
-        targets:
+            mode: direct
+          - scope: global
+            agent: claude-code
+            path: AGENTS.md
+            mode: direct
           - scope: global
             agent: claude-code
             path: CLAUDE.md
+            mode: import
+            import: AGENTS.md
 
 Each target declares:
 
 - `scope`: `project` or `global`
 - `agent`: required for global targets; optional for shared project files
 - `path`: relative path below the resolved scope root
+- `mode`: `direct`, `import`, or `copy`; defaults to `direct`
+- `import`: required for `import` mode; a relative path to the canonical
+  content from the generated adapter file
+
+The `canonical.source` field identifies shared content that adapters can
+reuse. `direct` writes the source bytes to the target. `import` generates the
+agent-native adapter file; its `import` path must also be declared as a
+canonical target in the same scope and agent (a shared project target may
+serve all project agents). `copy` materializes the same source bytes for
+agents without a documented import mechanism. Every generated adapter and
+canonical target is managed and recorded in the lockfile.
+
+Do not use an ordinary Markdown hyperlink as an instruction-file adapter.
+Agents are not required to follow links while loading configuration. Claude
+Code documents native `@path/to/file` imports, so its adapter can contain
+`@AGENTS.md`; Codex natively loads `AGENTS.md` and needs no adapter. See the
+[Claude Code memory documentation](https://code.claude.com/docs/en/memory) and
+[Codex AGENTS.md documentation](https://learn.chatgpt.com/docs/agent-configuration/agents-md).
+The first Claude Code adapter should generate this minimal file:
+
+    @AGENTS.md
 
 One source file may target both scopes. One package may provide different
-files for different agents. A global install selects only global targets; it
-must never copy project files into a user's home directory.
+files for different agents. `agents add` reads these declarations, places
+project targets in project state and global targets in user-global state, and
+installs every declared target. It must not accept a scope flag that changes
+the package declaration. If independent scope choice is required, publish
+separate package entries.
 
 V1 keeps the schema small. Package manifests declare files and destinations;
 they do not declare executable hooks.
@@ -295,14 +365,20 @@ they do not declare executable hooks.
 
 Supported source forms:
 
-    agents add official/nextjs
-    agents add github:acme/agent-files#packages/nextjs
-    agents add https://github.com/acme/agent-files.git#packages/nextjs
-    agents add git@github.com:acme/agent-files.git#packages/nextjs
-    agents add ../local-agent-files/nextjs
+    npx agents.md add official/nextjs
+    npx agents.md add @acme/agent-files
+    npx agents.md add github:acme/agent-files#packages/nextjs
+    npx agents.md add https://github.com/acme/agent-files.git#packages/nextjs
+    npx agents.md add git@github.com:acme/agent-files.git#packages/nextjs
+    npx agents.md add ../local-agent-files/nextjs
 
-The exact shorthand grammar may be refined during CLI implementation. A
-source reference must unambiguously identify:
+`@owner/repo` is an Agents GitHub shorthand. In this example:
+
+    npx agents.md add @doomedramen/agents-nextjs
+
+`npx` resolves only the `agents.md` CLI package; the CLI resolves
+`@doomedramen/agents-nextjs` as a GitHub source and must never treat it as an
+npm dependency. A source reference must unambiguously identify:
 
 - Git repository URL
 - package subdirectory, if any
@@ -340,19 +416,13 @@ Recommended source repository:
     ├── agents/
     │   ├── base/
     │   │   ├── agent.yaml
-    │   │   ├── project/
-    │   │   │   └── AGENTS.md
-    │   │   ├── global/
-    │   │   │   ├── claude/
-    │   │   │   │   └── CLAUDE.md
-    │   │   │   └── codex/
-    │   │   │       └── AGENTS.md
+    │   │   ├── AGENTS.md
+    │   │   ├── adapters/
+    │   │   │   └── claude-code.md
     │   │   └── README.md
     │   └── nextjs/
     │       ├── agent.yaml
-    │       ├── project/
-    │       │   ├── AGENTS.md
-    │       │   └── CLAUDE.md
+    │       ├── AGENTS.md
     │       └── README.md
     └── .github/
         └── workflows/
@@ -365,9 +435,10 @@ Naming rules:
   package slugs.
 - Give every package a short stable slug matching its directory where
   practical.
-- Keep `agent.yaml` at package root beside the scope directories.
-- Use `project/` and `global/<agent>/` when a package serves both scopes.
-  Flat project files remain valid for project-only packages.
+- Keep `agent.yaml` and the canonical `AGENTS.md` at package root. Scope is
+  declared in `agent.yaml`, not encoded by duplicating the folder tree.
+- Use an `adapters/` directory only for optional agent-specific additions;
+  generated entrypoints such as `CLAUDE.md` do not belong in source control.
 - Put human documentation in the source repository `README.md` and, when a
   repository contains multiple packages, in each package's `README.md`.
 - Use `agents/` as the preferred package container. Accept `packages/` as
@@ -523,7 +594,10 @@ package path.
 - clone or fetch every public source package
 - validate `agent.yaml`
 - verify every declared file exists
-- validate target scopes, agent identifiers, and relative destination paths
+- validate target scopes, agent identifiers, rendering modes, import paths,
+  and relative destination paths
+- verify that every `import` target names a declared canonical target in the
+  same scope and agent, or a shared project target
 - reject unsafe paths and symlink traversal
 - reject duplicate or ambiguous entries
 - check that derived metadata matches the source manifest
@@ -558,7 +632,7 @@ reproducible from an index commit.
 
     mkdir my-app
     cd my-app
-    agents add official/nextjs
+    npx agents.md add official/nextjs
 
 Agents:
 
@@ -569,31 +643,30 @@ Agents:
 5. validates the package
 6. detects collisions and local modifications
 7. installs files
-8. writes `agents.yaml` and `agents.lock`
+8. writes the relevant state files: `agents.yaml` for project targets and
+   `global.yaml`/`global.lock` for global targets
 
 ### Add global instructions
 
-Global state is separate from project state:
+Global state is separate from project state, but the package manifest decides
+which state it uses:
 
-    agents init --global
-    agents add acme/base --scope global --agent codex --agent claude-code
-    agents install --scope global
+    npx agents.md init
+    npx agents.md add @acme/agent-standards
+    npx agents.md install
 
-The same package may be installed to both scopes:
-
-    agents add acme/base --scope project
-    agents add acme/base --scope global --agent codex
-
-No command without an explicit global scope may write to user-level agent
-directories. Global package state is user-specific and must not be inferred
-from a project's `agents.yaml`.
+If `agent.yaml` declares both project and global targets, `add` records the
+same source in both `agents.yaml` and `global.yaml`, and `install` reconciles
+both. A package that declares only global targets updates only `global.yaml`.
+The CLI shows the global write plan and uses the configured target adapter;
+there is no scope flag to override package metadata.
 
 ### Add package directly from Git
 
 The public index is optional:
 
-    agents add github:acme/agent-files#packages/nextjs
-    agents add git@github.com:acme/agent-files.git
+    npx agents.md add github:acme/agent-files#packages/nextjs
+    npx agents.md add git@github.com:acme/agent-files.git
 
 Existing Git authentication must be used. Agents does not create a separate
 GitHub account or credential system.
@@ -602,7 +675,7 @@ GitHub account or credential system.
 
     git clone git@github.com:acme/shop.git
     cd shop
-    agents install
+    npx agents.md install
 
 `agents install` prefers commits in `agents.lock`. It does not need the
 public index when the manifest and lockfile contain explicit source
@@ -610,84 +683,89 @@ references.
 
 For global state:
 
-    agents install --scope global
+    npx agents.md install
 
-This reads the user's global manifest and global lockfile, then resolves each
-logical target to the appropriate agent-specific directory.
+This reads project state and the user's global manifest/lockfile, then
+resolves each declared logical target to the appropriate directory.
 
 ### Update packages
 
-    agents outdated
-    agents diff
-    agents update
+    npx agents.md outdated
+    npx agents.md diff
+    npx agents.md update
 
 Updates produce ordinary working-tree changes suitable for a normal pull
 request. Unsafe local modifications stop the update.
 
 ### Remove a package
 
-    agents remove official/nextjs
+    npx agents.md remove official/nextjs
 
 Agents removes only files owned exclusively by the package, after checking
-for local changes. It updates the state file for the selected scope. Example:
-
-    agents remove acme/base --scope global
+for local changes. It updates every state file covered by the package's
+declared targets. A package installed in both scopes is removed from both by
+one command.
 
 ## 10. CLI
 
+The CLI is distributed as the npm package `agents.md`. Its primary
+invocation is:
+
+    npx agents.md <command> [arguments]
+
+The package exposes an `agents.md` executable through npm's `bin` field. A
+local project may install it as a dev dependency for faster repeat use, but
+the package is only the CLI distribution; package files and index data remain
+in Git repositories.
+
 Initial commands:
 
-    agents init
-    agents add
-    agents install
-    agents remove
-    agents update
-    agents outdated
-    agents diff
-    agents list
-    agents targets
-    agents search
-    agents info
-    agents check
+    npx agents.md init
+    npx agents.md add
+    npx agents.md install
+    npx agents.md remove
+    npx agents.md update
+    npx agents.md outdated
+    npx agents.md diff
+    npx agents.md list
+    npx agents.md targets
+    npx agents.md search
+    npx agents.md info
+    npx agents.md check
 
 Potential later commands:
 
-    agents publish
-    agents validate
-    agents doctor
-    agents trust
-    agents pin
-    agents clean
+    npx agents.md publish
+    npx agents.md validate
+    npx agents.md doctor
+    npx agents.md trust
+    npx agents.md pin
+    npx agents.md clean
 
-Scope options:
-
-    --scope project
-    --scope global
-    --global              # shorthand for --scope global
-
-`--scope` may be repeated when one package should be installed in both
-scopes; each scope still updates its own manifest and lockfile. The default
-scope is `project`. Agent filters such as `--agent codex --agent
-claude-code` apply to global targets.
+Scope is not a CLI selection. The installed package's `agent.yaml` declares
+the scope and agent for every target. `agents add` and `agents install` route
+project targets to the consuming repository and global targets to the
+appropriate user-global adapter. A package that declares both scopes updates
+both state files. There is no `--scope` or `--global` target-selection flag.
 
 ### `agents targets`
 
 Shows supported agent adapters and their resolved project/global roots. This
-is the diagnostic command for confirming where a package will write files:
+is the diagnostic command for confirming where package-declared targets will
+write files:
 
-    agents targets
-    agents targets --agent codex
-    agents targets --scope global
+    npx agents.md targets
+    npx agents.md targets --agent codex
 
 ### `agents init`
 
-Without a scope flag, creates project state:
+Creates project state:
 
     agents.yaml
     agents.lock
 
-With `--global`, creates user state in the platform-specific Agents
-configuration directory:
+When a package declares global targets, the CLI creates user state lazily in
+the platform-specific Agents configuration directory:
 
     global.yaml
     global.lock
@@ -699,28 +777,23 @@ silently.
 
 Examples:
 
-    agents add official/nextjs
-    agents add acme/agents#packages/base
-    agents add https://github.com/acme/agents.git#packages/base
-    agents add ./agent-packages/base
-    agents add official/nextjs --dry-run
-    agents add acme/base --scope global --agent codex
-    agents add acme/base --scope global --agent claude-code --agent codex
+    npx agents.md add official/nextjs
+    npx agents.md add acme/agents#packages/base
+    npx agents.md add https://github.com/acme/agents.git#packages/base
+    npx agents.md add ./agent-packages/base
+    npx agents.md add official/nextjs --dry-run
+    npx agents.md add @acme/agent-standards
 
 The command resolves, validates, plans, and installs package files. It must
-show conflicts before writing files. Global scope installs only package
-targets declared for the selected agents.
+show conflicts before writing files. It writes each target according to the
+scope and agent declared in the package's `agent.yaml`.
 
 ### `agents install`
 
-For project scope, reads `agents.yaml` and `agents.lock`, fetches locked
-Git commits, and restores project targets. If no lockfile exists, it resolves
-selectors and creates one.
-
-For global scope, reads `global.yaml` and `global.lock`, then restores only
-global targets:
-
-    agents install --scope global
+Reads project `agents.yaml`/`agents.lock` and user-global
+`global.yaml`/`global.lock`, fetches locked Git commits, and restores every
+declared target. If a lockfile does not exist, it resolves selectors and
+creates the relevant lockfile. There is no scope-selection flag.
 
 ### `agents update`
 
@@ -729,10 +802,9 @@ changes, and updates the lockfile after a safe install.
 
 Useful options:
 
-    agents update --dry-run
-    agents update --interactive
-    agents update official/nextjs --force
-    agents update --scope global
+    npx agents.md update --dry-run
+    npx agents.md update --interactive
+    npx agents.md update official/nextjs --force
 
 `--force` is an explicit destructive choice and must clearly warn that local
 changes may be overwritten.
@@ -742,22 +814,20 @@ changes may be overwritten.
 Shows differences between installed files and package files at the locked or
 incoming source commit:
 
-    agents diff
-    agents diff official/nextjs
-    agents diff --scope global
+    npx agents.md diff
+    npx agents.md diff official/nextjs
 
 ### `agents check`
 
 Checks that:
 
-- the selected lockfile matches the selected manifest
+- each relevant lockfile matches its manifest
 - locked package commits are available and valid
 - installed files match lockfile hashes
 - no managed file is unexpectedly missing
 - package ownership is unambiguous
 
-    agents check --frozen
-    agents check --scope global
+    npx agents.md check --frozen
 
 ## 11. Project manifest
 
@@ -770,7 +840,6 @@ Suggested `agents.yaml`:
 
     packages:
       - id: official/nextjs
-        scope: project
         source:
           type: git
           url: https://github.com/example/agent-files.git
@@ -778,7 +847,6 @@ Suggested `agents.yaml`:
         selector: main
 
       - id: acme/base
-        scope: project
         source:
           type: git
           url: git@github.com:acme/agent-standards.git
@@ -789,27 +857,27 @@ The source descriptor is written into the manifest after index resolution.
 This makes future installation independent of a live registry.
 
 Short references are allowed as CLI input. The on-disk manifest should favour
-explicit Git source information. A package entry may also include an
-`agents` list when `scope: global`:
+explicit Git source information. Scope and target agents are not user
+selectors in this file; they are derived from the package's `agent.yaml`.
+When that manifest declares global targets, the same dependency is recorded in
+the user-global manifest:
 
-    version: 1
+    <agents-config-dir>/global.yaml:
 
-    packages:
-      - id: acme/base
-        scope: global
-        agents:
-          - claude-code
-          - codex
-        source:
-          type: git
-          url: git@github.com:acme/agent-standards.git
-          path: base
-        selector: v2.1.0
+        version: 1
 
-For a global package entry, omitted `agents` means all compatible global
-targets declared by the package. An explicit `agents` list filters those
-targets. Unknown or unavailable agent adapters must produce a clear error,
-not a write to a guessed path.
+        packages:
+          - id: acme/base
+            source:
+              type: git
+              url: git@github.com:acme/agent-standards.git
+              path: base
+            selector: v2.1.0
+
+The CLI reads the package manifest at the locked commit, partitions its
+targets by declared scope, and installs every compatible target. Unknown or
+unavailable agent adapters must produce a clear error, not a write to a
+guessed path.
 
 Project state and global state use separate manifests. The default global
 manifest is `global.yaml` in the platform-specific Agents configuration
@@ -841,12 +909,17 @@ and is stored beside `global.yaml`.
         files:
           - scope: project
             path: AGENTS.md
+            mode: direct
             sha256: sha256:...
           - scope: project
+            agent: claude-code
             path: CLAUDE.md
+            mode: import
+            import: AGENTS.md
             sha256: sha256:...
           - scope: project
             path: .cursor/rules/nextjs.mdc
+            mode: direct
             sha256: sha256:...
 
 Global lock (`global.lock`) uses the same schema:
@@ -860,9 +933,6 @@ Global lock (`global.lock`) uses the same schema:
     packages:
       acme/base:
         scope: global
-        agents:
-          - codex
-          - claude-code
         source:
           type: git
           url: git@github.com:acme/agent-standards.git
@@ -874,10 +944,18 @@ Global lock (`global.lock`) uses the same schema:
           - scope: global
             agent: codex
             path: AGENTS.md
+            mode: direct
+            sha256: sha256:...
+          - scope: global
+            agent: claude-code
+            path: AGENTS.md
+            mode: direct
             sha256: sha256:...
           - scope: global
             agent: claude-code
             path: CLAUDE.md
+            mode: import
+            import: AGENTS.md
             sha256: sha256:...
 
 The full Git commit is the primary immutable package version. Tags and
@@ -886,7 +964,9 @@ releases are human-friendly selectors that must resolve to commits.
 The index commit is recorded when an index resolved a short package name. It
 is not needed to install an already explicit source and locked commit. Lock
 entries store logical target paths and adapter identifiers, never absolute
-home-directory paths.
+home-directory paths. Scope, agent, mode, and import fields in a lockfile are
+snapshots of the package manifest at the locked commit; they are not
+alternate user-controlled scope selectors.
 
 ## 13. Resolution, cache, and transactions
 
@@ -904,7 +984,7 @@ High-level install algorithm:
     read agent.yaml at that commit
           |
           v
-    select project/global targets and agent adapters
+    read package-declared project/global targets and agent adapters
           |
           v
     validate paths and package files
@@ -923,7 +1003,8 @@ High-level install algorithm:
 
 Project writes are relative to the consuming repository root. Global writes
 are relative to a built-in or explicitly configured agent target root. The
-package cannot choose that root.
+package declares the scope and logical target; the package cannot choose the
+physical root.
 
 The operation should be transactional where practical. A failed install must
 not leave half a package installed.
@@ -1003,10 +1084,10 @@ Example error:
     The file has changed locally since installation.
 
     Review:
-      agents diff official/nextjs
+      npx agents.md diff official/nextjs
 
     Overwrite explicitly:
-      agents update official/nextjs --force
+      npx agents.md update official/nextjs --force
 
 ## 16. Security and path safety
 
@@ -1034,8 +1115,11 @@ For project scope, the active scope root is the consuming repository. For
 global scope, it is the selected agent's registered global root. A package
 cannot choose an arbitrary global root or write to another user's files.
 
-Global writes require an explicit `--scope global` or `--global` flag and
-must use the same local-modification protection as project writes.
+Global writes are permitted only when the locked package manifest declares a
+global target. The CLI must show those writes in its plan, require normal
+confirmation for a new global target unless configured otherwise, and use the
+same local-modification protection as project writes. A CLI flag must not
+override the package-declared scope.
 
 The index validator applies the same package validation before accepting an
 entry.
@@ -1074,8 +1158,8 @@ Authors may use tags:
 
 Examples:
 
-    agents add official/nextjs@v1.4.0
-    agents add official/nextjs@main
+    npx agents.md add official/nextjs@v1.4.0
+    npx agents.md add official/nextjs@main
 
 Both resolve to a full commit in `agents.lock`. Semver range resolution may
 be added later; it must always end at an immutable commit.
@@ -1109,7 +1193,7 @@ HTTP API is not part of the core architecture.
 
 Private organisations can use the CLI without the public index:
 
-    agents add git@github.com:my-company/agent-standards.git#base
+    npx agents.md add git@github.com:my-company/agent-standards.git#base
 
 They may also maintain a private index repository:
 
@@ -1162,7 +1246,7 @@ Possible recommendations:
     Playwright
 
     Recommended:
-      agents add official/nextjs official/typescript official/prisma official/playwright
+      npx agents.md add official/nextjs official/typescript official/prisma official/playwright
 
 ## 22. Git and CI integration
 
@@ -1230,14 +1314,34 @@ There is no required registry backend between the CLI and Git repositories.
 
 ## 24. Language and portability
 
-Rust is a strong implementation choice for the CLI:
+The CLI is written in TypeScript and published to npm as `agents.md`.
 
-- fast startup
-- cross-platform executable
-- robust filesystem handling
-- suitable Git integration
-- easy GitHub release distribution
-- no requirement for Node.js or Python
+The package must:
+
+- compile TypeScript to portable JavaScript
+- expose an `agents.md` executable through `package.json.bin`
+- support the current Node.js LTS runtime policy
+- use the user's existing Git executable and credentials, or a compatible
+  Git library where that improves portability
+- keep package files and index data in Git; npm distributes only the CLI
+
+The canonical invocation is:
+
+    npx agents.md add @doomedramen/agents-nextjs
+
+The `@owner/repo` argument is parsed by the CLI as a GitHub source shorthand;
+it is not an npm package dependency. A local installation may invoke the same
+binary as `agents.md` without `npx`.
+
+Minimum npm package metadata:
+
+    {
+      "name": "agents.md",
+      "type": "module",
+      "bin": {
+        "agents.md": "dist/cli.js"
+      }
+    }
 
 The CLI should support:
 
@@ -1279,6 +1383,7 @@ Each supported agent has an adapter with:
 - project target rules
 - global root resolution for Linux, macOS, and Windows
 - supported global instruction/configuration paths
+- supported native import syntax and adapter rendering modes
 - agent-native precedence information
 - adapter schema/version
 
@@ -1331,16 +1436,14 @@ The first usable version must support:
 
 ### Commands
 
-    agents init
-    agents init --global
-    agents add
-    agents install
-    agents install --global
-    agents remove
-    agents list
-    agents targets
-    agents diff
-    agents update
+    npx agents.md init
+    npx agents.md add
+    npx agents.md install
+    npx agents.md remove
+    npx agents.md list
+    npx agents.md targets
+    npx agents.md diff
+    npx agents.md update
 
 ### Required behavior
 
@@ -1352,7 +1455,7 @@ The first usable version must support:
 - safe path validation
 - project and global installation scopes
 - target adapters for supported agents
-- explicit global writes with `--scope global` or `--global`
+- global writes only from package-declared global targets
 - separate ownership and lock state per scope
 - no package scripts
 - transactional installation where practical
@@ -1401,8 +1504,8 @@ The first milestone is complete when this works:
     git init demo
     cd demo
 
-    agents init
-    agents add github:example/agent-packages#nextjs
+    npx agents.md init
+    npx agents.md add github:example/agent-packages#nextjs
 
 and produces:
 
@@ -1411,33 +1514,37 @@ and produces:
     AGENTS.md
     CLAUDE.md
 
+`CLAUDE.md` is a generated native import adapter containing `@AGENTS.md`,
+not a second hand-maintained copy of the instructions.
+
 On another machine:
 
     git clone demo
     cd demo
-    agents install
+    npx agents.md install
 
 must reproduce the same managed files from the locked Git commit, without
 requiring the public index.
 
 The following must also work:
 
-    agents diff
-    agents update
-    agents remove official/nextjs
+    npx agents.md diff
+    npx agents.md update
+    npx agents.md remove official/nextjs
 
 without silently overwriting or deleting locally modified files.
 
 Global installation must also work independently:
 
-    agents init --global
-    agents add github:example/agent-packages#base --scope global --agent codex
-    agents install --scope global
+    npx agents.md init
+    npx agents.md add github:example/agent-packages#base
+    npx agents.md install
 
-This must write only to the configured Codex global target, record the
-resolved source commit in `global.lock`, and leave project files and
-`agents.lock` unchanged. A later global update or removal must protect
-locally modified global files.
+When that package's `agent.yaml` declares only a Codex global target, this
+must write only to the configured Codex global target, record the resolved
+source commit in `global.lock`, and leave project files and `agents.lock`
+unchanged. A later update or removal must protect locally modified global
+files.
 
 The public discovery path must additionally work from Git alone:
 
@@ -1455,9 +1562,9 @@ Short description:
 
 Expanded description:
 
-> Install, share, version, and sync `AGENTS.md`, `CLAUDE.md`, Cursor rules,
-> Copilot instructions, and other coding-agent configuration directly from
-> Git repositories.
+> Install, share, version, and sync `AGENTS.md`, generated `CLAUDE.md` import
+> adapters, Cursor rules, Copilot instructions, and other coding-agent
+> configuration directly from Git repositories with `npx agents.md`.
 
 The conceptual comparison is:
 
@@ -1476,6 +1583,9 @@ The conceptual comparison is:
 8. Updates are ordinary, inspectable Git changes.
 9. Package versions are reproducible full Git commits.
 10. Private Git repositories work naturally.
+11. Canonical instructions are stored once; agent-specific entrypoints are
+    generated from them when native imports exist.
+12. npm distributes the TypeScript CLI only; Git stores packages and indexes.
 11. The public index is optional infrastructure.
 12. Index metadata never replaces source package content.
 13. The system is agent-neutral.
