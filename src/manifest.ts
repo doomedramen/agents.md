@@ -112,6 +112,37 @@ function validateTargetUniqueness(files: PackageFile[]): void {
   }
 }
 
+function validateImportTargets(manifest: PackageManifest): void {
+  for (const file of manifest.files) {
+    for (const target of file.targets) {
+      if (target.mode !== "import") {
+        continue;
+      }
+      const canonicalSource = manifest.canonical?.source;
+      if (!canonicalSource) {
+        throw new Error("agent.yaml: import target requires canonical.source");
+      }
+
+      const hasCanonicalTarget = manifest.files.some(
+        (candidate) =>
+          candidate.source === canonicalSource &&
+          candidate.targets.some(
+            (candidateTarget) =>
+              candidateTarget.scope === target.scope &&
+              candidateTarget.path === target.import &&
+              candidateTarget.mode !== "import" &&
+              (candidateTarget.agent === undefined || candidateTarget.agent === target.agent),
+          ),
+      );
+      if (!hasCanonicalTarget) {
+        throw new Error(
+          `agent.yaml: import target ${target.path} requires a canonical target at ${target.import}`,
+        );
+      }
+    }
+  }
+}
+
 async function validateSources(root: string, manifest: PackageManifest): Promise<void> {
   for (const file of manifest.files) {
     try {
@@ -164,6 +195,7 @@ export async function readPackageManifest(root: string): Promise<{ manifest: Pac
   };
 
   validateTargetUniqueness(manifest.files);
+  validateImportTargets(manifest);
   await validateSources(root, manifest);
   return { manifest, bytes };
 }

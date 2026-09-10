@@ -260,3 +260,48 @@ files:
     await rm(fixtureRoot, { recursive: true, force: true });
   }
 });
+
+test("add rejects an import adapter without a canonical target", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "agents-md-import-"));
+  const packageRoot = join(fixtureRoot, "source");
+  const projectRoot = join(fixtureRoot, "consumer");
+
+  try {
+    await mkdir(packageRoot, { recursive: true });
+    await mkdir(projectRoot, { recursive: true });
+    await writeFile(
+      join(packageRoot, "agent.yaml"),
+      `schema: 1
+name: invalid-import
+description: Import without a canonical target
+canonical:
+  source: AGENTS.md
+files:
+  - source: AGENTS.md
+    targets:
+      - scope: global
+        agent: claude-code
+        path: CLAUDE.md
+        mode: import
+        import: AGENTS.md
+`,
+    );
+    await writeFile(join(packageRoot, "AGENTS.md"), "# Rules\n");
+
+    await run("git", ["init", "-b", "main"], packageRoot);
+    await run("git", ["config", "user.email", "test@example.com"], packageRoot);
+    await run("git", ["config", "user.name", "Agents Test"], packageRoot);
+    await run("git", ["add", "agent.yaml", "AGENTS.md"], packageRoot);
+    await run("git", ["commit", "-m", "fixture"], packageRoot);
+
+    await assert.rejects(
+      runCli(["add", packageRoot], projectRoot, {
+        AGENTS_CONFIG_DIR: join(fixtureRoot, "config"),
+        AGENTS_TEST_HOME: join(fixtureRoot, "home"),
+      }),
+      /canonical target/,
+    );
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
