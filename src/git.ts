@@ -149,7 +149,7 @@ async function resolveRemoteCommit(repositoryRoot: string, requestedRef?: string
 }
 
 async function cachePath(source: SourceDescriptor, commit: string): Promise<string> {
-  return join(configDirectory(), "cache", "v2", `${hash(sourceIdentity(source))}-${commit}`);
+  return join(configDirectory(), "cache", "v2", `${hash(source.url)}-${commit}`);
 }
 
 async function validCache(path: string, commit: string): Promise<boolean> {

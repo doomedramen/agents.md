@@ -35,7 +35,7 @@ Commands:
   remove <id>... [--global]
   render [--offline] [--global]
   diff [--update] [--global]
-  update [<id>...] [--global] [--offline] [--dry-run]
+  update [<id>...] [--global] [--dry-run]
   outdated [--global]
   check [--offline] [--global]
   detect
@@ -53,7 +53,7 @@ function commandHelp(command: string): string {
     remove: "remove <id>... [--global]",
     render: "render [--offline] [--global]",
     diff: "diff [--update] [--global]",
-    update: "update [<id>...] [--global] [--offline]",
+    update: "update [<id>...] [--global] [--dry-run]",
     outdated: "outdated [--global]",
     check: "check [--offline] [--global]",
     detect: "detect",
@@ -115,7 +115,7 @@ function validateCommandOptions(command: string, parsed: Parsed): void {
     remove: { flags: ["global", "dry-run"], values: [] },
     render: { flags: ["global", "offline"], values: [] },
     diff: { flags: ["global", "update"], values: [] },
-    update: { flags: ["global", "dry-run", "offline"], values: [] },
+    update: { flags: ["global", "dry-run"], values: [] },
     outdated: { flags: ["global"], values: [] },
     check: { flags: ["global", "offline"], values: [] },
     detect: { flags: [], values: [] },
@@ -226,7 +226,7 @@ async function main(argv: string[]): Promise<void> {
       await diffV2({ projectRoot, global: hasFlag(parsed, "global"), update: hasFlag(parsed, "update") });
       return;
     case "update":
-      await updateV2({ projectRoot, global: hasFlag(parsed, "global"), offline: hasFlag(parsed, "offline"), ids: parsed.positional, dryRun: hasFlag(parsed, "dry-run") });
+      await updateV2({ projectRoot, global: hasFlag(parsed, "global"), ids: parsed.positional, dryRun: hasFlag(parsed, "dry-run") });
       return;
     case "outdated": {
       if (parsed.positional.length > 0) throw new UsageError("outdated accepts no positional arguments");

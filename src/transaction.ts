@@ -44,19 +44,23 @@ async function ensureNoSymlinkAncestors(path: string, boundary: string): Promise
   if (relation.startsWith("..") || isAbsolute(relation)) {
     throw new Error(`Path escapes allowed destination root: ${path}`);
   }
+  let boundaryExists = false;
   try {
-    if ((await lstat(boundaryAbsolute)).isSymbolicLink()) throw new Error(`Refusing symlink ancestor: ${boundaryAbsolute}`);
+    if ((await lstat(boundaryAbsolute)).isSymbolicLink()) throw new Error(`Refusing symlink ancestor: ${boundaryAbsolute} for ${path}`);
+    boundaryExists = true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   let current = dirname(absolute);
   while (true) {
     try {
-      if ((await lstat(current)).isSymbolicLink()) throw new Error(`Refusing symlink ancestor: ${current}`);
+      const stat = await lstat(current);
+      if (stat.isSymbolicLink()) throw new Error(`Refusing symlink ancestor: ${current} for ${path} (boundary ${boundaryAbsolute})`);
+      if (current === boundaryAbsolute || (!boundaryExists && !relative(current, boundaryAbsolute).startsWith("..") && !isAbsolute(relative(current, boundaryAbsolute)))) break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    if (current === boundaryAbsolute || current === parse(current).root) break;
+    if (current === parse(current).root) break;
     const parent = dirname(current);
     if (parent === current) break;
     current = parent;
@@ -92,11 +96,23 @@ function assertExpectedHash(write: TransactionWrite, actual: string | null): voi
 
 async function writeJournal(path: string, journal: Journal): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
+  try {
+    if ((await lstat(path)).isSymbolicLink()) throw new Error(`Refusing symlink recovery journal: ${path}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   await writeFile(path, JSON.stringify(journal, null, 2) + "\n", "utf8");
 }
 
 export async function recoverTransaction(journalPath: string): Promise<void> {
-  if (!(await exists(journalPath))) return;
+  let journalStat;
+  try {
+    journalStat = await lstat(journalPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (journalStat.isSymbolicLink()) throw new Error(`Refusing symlink recovery journal: ${journalPath}`);
   let journal: Journal;
   try {
     journal = JSON.parse(await readFile(journalPath, "utf8")) as Journal;
@@ -157,9 +173,17 @@ export async function applyTransaction(options: {
   boundary: string;
   extraBoundaries?: string[];
 }): Promise<void> {
+  const boundaries = [options.boundary, ...(options.extraBoundaries ?? [])].map((value) => resolve(value));
+  for (const statePath of [options.journalPath, options.lockPath]) {
+    const stateBoundary = boundaries.find((candidate) => {
+      const relation = relative(candidate, resolve(statePath));
+      return !relation.startsWith("..") && !isAbsolute(relation);
+    });
+    if (!stateBoundary) throw new Error(`Transaction state path is outside allowed roots: ${statePath}`);
+    await ensureNoSymlinkAncestors(statePath, stateBoundary);
+  }
   await recoverTransaction(options.journalPath);
   await acquireLock(options.lockPath);
-  const boundaries = [options.boundary, ...(options.extraBoundaries ?? [])].map((value) => resolve(value));
   try {
     await validateTransaction({ ...options, boundaries });
 

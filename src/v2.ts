@@ -17,6 +17,7 @@ import {
 } from "./git.js";
 import {
   assertSafeDirectoryPath,
+  assertConsumerAlias,
   parseConsumerConfigBytes,
   readSourceDocument,
   validateDeclaredSources,
@@ -217,7 +218,7 @@ function emptyConfig(global: boolean, agents?: string[]): ConsumerConfigV2 {
     packages: [],
     packs: [],
     outputs: [{ directory: ".", use: [], exclude: [], local: [global ? "local.md" : ".agents/project.md"], ...(global ? {} : { adapters: ["claude-code"] }) }],
-    ...(global ? { agents: agents && agents.length > 0 ? agents : ["claude-code"] } : {}),
+    ...(global ? { agents: [...new Set(agents && agents.length > 0 ? agents : ["claude-code"])] } : {}),
   };
 }
 
@@ -771,6 +772,7 @@ export async function addV2(options: AddV2Options): Promise<{ ids: string[]; com
   if (options.id && options.references.length !== 1) throw new Error("--id applies only to one source");
   if (options.global && options.directory !== undefined) throw new Error("--dir cannot be combined with --global");
   const paths = scopePaths(options);
+  await recoverTransaction(paths.journalPath);
   const configExists = await fileExists(paths.configPath);
   if (configExists) await assertNoLegacyScope(options);
   const initial = configExists ? undefined : await prepareImplicitInitialization(options);
@@ -788,7 +790,7 @@ export async function addV2(options: AddV2Options): Promise<{ ids: string[]; com
   for (const [index, reference] of options.references.entries()) {
     const resolved = await resolveV2Source(reference, options.projectRoot, options.ref);
     const document = await readResolvedSource(resolved);
-    const alias = options.id ?? document.manifest.name;
+    const alias = assertConsumerAlias(options.id ?? document.manifest.name, options.id ? "--id" : "manifest name");
     if (aliases.has(alias)) {
       const existingPackage = nextConfig.packages.find((selection) => selection.id === alias);
       const existingPack = nextConfig.packs.find((selection) => selection.id === alias);
@@ -868,6 +870,7 @@ export async function removeV2(options: V2CommandOptions & { ids: string[]; dryR
   if (options.ids.length === 0) throw new Error("remove requires at least one alias");
   await assertNoLegacyScope(options);
   const paths = scopePaths(options);
+  await recoverTransaction(paths.journalPath);
   const config = await readConfig(paths, Boolean(options.global));
   const oldLock = await readLock(paths);
   const known = new Set([...config.packages, ...config.packs].map((selection) => selection.id));
@@ -981,6 +984,7 @@ function oneHunkDiff(oldBody: Buffer | undefined, newBody: Buffer): string {
 async function plannedRenderedForDiff(options: ScopeRenderOptions, update: boolean): Promise<RenderedState> {
   const paths = scopePaths(options);
   await assertNoLegacyScope(options);
+  await recoverTransaction(paths.journalPath);
   const config = await readConfig(paths, Boolean(options.global));
   const lock = await readLock(paths);
   if (!update) return renderLoadedState({ ...options, previousLock: lock });
@@ -1115,6 +1119,7 @@ async function reconcilePackOutputs(
 export async function updateV2(options: V2CommandOptions & { ids?: string[]; dryRun?: boolean }): Promise<void> {
   const paths = scopePaths(options);
   await assertNoLegacyScope(options);
+  await recoverTransaction(paths.journalPath);
   const oldConfig = await readConfig(paths, Boolean(options.global));
   const oldLock = await readLock(paths);
   const requested = options.ids ?? [];
@@ -1158,6 +1163,7 @@ export async function updateV2(options: V2CommandOptions & { ids?: string[]; dry
 export async function outdatedV2(options: V2CommandOptions): Promise<boolean> {
   const paths = scopePaths(options);
   await assertNoLegacyScope(options);
+  await recoverTransaction(paths.journalPath);
   const config = await readConfig(paths, Boolean(options.global));
   const lock = await readLock(paths);
   let outdated = false;
@@ -1211,6 +1217,7 @@ async function runEditor(command: string, path: string): Promise<void> {
 export async function editV2(options: V2CommandOptions & { directory?: string }): Promise<{ path: string; edited: boolean }> {
   const paths = scopePaths(options);
   await assertNoLegacyScope(options);
+  await recoverTransaction(paths.journalPath);
   const config = await readConfig(paths, Boolean(options.global));
   const directory = assertSafeDirectoryPath(options.directory ?? ".", "--dir");
   const output = config.outputs.find((candidate) => candidate.directory === directory);
