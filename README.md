@@ -43,8 +43,7 @@ my-agent-package/
 └── AGENTS.md
 ```
 
-This manifest installs `AGENTS.md` into a project and creates a Claude Code
-adapter that imports the same file:
+This manifest installs `AGENTS.md`, then writes `@AGENTS.md` into `CLAUDE.md`:
 
 ```yaml
 schema: 1
@@ -65,8 +64,15 @@ files:
         import: AGENTS.md
 ```
 
-Use `mode: direct` to copy a file. Use `mode: import` to write an adapter for a
-tool that supports imports. Import targets require `canonical.source`.
+Use `mode: direct` to copy a file. For Claude Code, `mode: import` creates a
+one-line adapter:
+
+```text
+@AGENTS.md
+```
+
+Import targets require `canonical.source`. The installer writes regular files
+and rejects destination symlinks.
 
 Keep package paths relative to the package directory. The CLI rejects paths that
 escape their allowed root, duplicate destinations, and destination symlinks.
