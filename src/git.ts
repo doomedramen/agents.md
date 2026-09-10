@@ -45,7 +45,12 @@ function githubReference(reference: string): { url: string; packagePath: string 
 }
 
 function remoteReference(reference: string): { url: string; packagePath: string } | undefined {
-  if (reference.startsWith("https://") || reference.startsWith("http://") || reference.startsWith("git@")) {
+  if (
+    reference.startsWith("https://") ||
+    reference.startsWith("http://") ||
+    reference.startsWith("git@") ||
+    reference.startsWith("file://")
+  ) {
     return splitRemoteReference(reference);
   }
   return githubReference(reference);

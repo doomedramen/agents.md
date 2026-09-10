@@ -99,3 +99,45 @@ files:
     await rm(fixtureRoot, { recursive: true, force: true });
   }
 });
+
+test("add accepts a remote Git source", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "agents-md-remote-"));
+  const packageRoot = join(fixtureRoot, "source");
+  const bareRoot = join(fixtureRoot, "source.git");
+  const projectRoot = join(fixtureRoot, "consumer");
+
+  try {
+    await mkdir(packageRoot, { recursive: true });
+    await mkdir(projectRoot, { recursive: true });
+    await writeFile(
+      join(packageRoot, "agent.yaml"),
+      `schema: 1
+name: remote-rules
+description: Rules from a remote Git repository
+files:
+  - AGENTS.md
+`,
+    );
+    await writeFile(join(packageRoot, "AGENTS.md"), "# Remote rules\n");
+
+    await run("git", ["init", "-b", "main"], packageRoot);
+    await run("git", ["config", "user.email", "test@example.com"], packageRoot);
+    await run("git", ["config", "user.name", "Agents Test"], packageRoot);
+    await run("git", ["add", "agent.yaml", "AGENTS.md"], packageRoot);
+    await run("git", ["commit", "-m", "fixture"], packageRoot);
+    await run("git", ["clone", "--bare", packageRoot, bareRoot], fixtureRoot);
+
+    await runCli(["add", `file://${bareRoot}`], projectRoot, {
+      AGENTS_CONFIG_DIR: join(fixtureRoot, "config"),
+      AGENTS_TEST_HOME: join(fixtureRoot, "home"),
+    });
+
+    assert.equal(await readFile(join(projectRoot, "AGENTS.md"), "utf8"), "# Remote rules\n");
+    const lock = parse(await readFile(join(projectRoot, "agents.lock"), "utf8"));
+    const locked = lock.packages["remote-rules"];
+    assert.equal(locked.source.url, `file://${bareRoot}`);
+    assert.match(locked.commit, /^[0-9a-f]{40}$/);
+  } finally {
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+});
