@@ -91,7 +91,7 @@ packages:
 packs: []
 outputs:
   - directory: .
-    use: [typescript]
+    use: [project-typescript]
     exclude: []
     local: [.agents/project.md]
     adapters: [claude-code]
@@ -198,6 +198,10 @@ which overwritten legacy guidance a team intended to retain.
 npm install
 npm run check
 npm pack --dry-run --json
+npm publish --dry-run
 ```
 
-No npm version bump or publish is part of this release.
+`npm install` installs the Lefthook Git hooks. Pre-commit runs the build;
+pre-push runs the full check. Publishing runs the full check through
+`prepublishOnly`, and `prepack` rebuilds `dist/` immediately before the package
+tarball is created. Publishing remains an explicit maintainer action.

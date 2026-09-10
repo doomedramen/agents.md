@@ -12,7 +12,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "npm run build && npm test",
-    "prepublishOnly": "npm run build",
+    "prepare": "lefthook install",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run check",
     "test": "tsx --test 'test/**/*.test.ts'"
   },
   "engines": {
@@ -23,6 +25,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "lefthook": "^2.1.12",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"
   }

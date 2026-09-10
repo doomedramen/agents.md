@@ -5,4 +5,6 @@
 - Schema 2 replaces package-declared filesystem destinations with consumer
   outputs and local inputs. Schema 1 is supported only by the documented
   legacy path and narrow project migration; it is not written into v2 scopes.
-- No npm version bump or publish.
+- Version `0.2.1` is prepared for an explicit maintainer publish. The npm
+  lifecycle now runs the full check before publish and rebuilds `dist/` before
+  packing.
