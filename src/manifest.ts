@@ -522,6 +522,9 @@ export function parseConsumerConfigBytes(bytes: Buffer | string, global = false)
   }
   const packages = raw.packages.map(parseConsumerPackage);
   const packs = raw.packs.map(parseConsumerPack);
+  if (global && packs.some((selection) => selection.directory !== ".")) {
+    throw new Error("agents.yaml: global pack selections must use directory .");
+  }
   const aliases = new Set<string>();
   for (const selection of [...packages, ...packs]) {
     if (aliases.has(selection.id)) throw new Error(`agents.yaml: duplicate alias: ${selection.id}`);
@@ -557,6 +560,20 @@ export function parseConsumerConfigBytes(bytes: Buffer | string, global = false)
   }
   if (global && (outputs.length !== 1 || outputs[0].local.length !== 1 || outputs[0].local[0] !== "local.md")) {
     throw new Error("agents.yaml: global scope requires output . with local input local.md");
+  }
+  const generatedPaths = new Set(outputs.flatMap((output) => [
+    output.directory === "." ? "AGENTS.md" : `${output.directory}/AGENTS.md`,
+    ...(output.adapters?.includes("claude-code") ? [output.directory === "." ? "CLAUDE.md" : `${output.directory}/CLAUDE.md`] : []),
+  ]).map((path) => path.toLowerCase()));
+  const statePaths = new Set(["agents.yaml", "agents.lock", ".agents/.operation.lock", ".agents/.recovery.json"]);
+  for (const output of outputs) {
+    for (const local of output.local) {
+      const key = local.toLowerCase();
+      if (generatedPaths.has(key)) throw new Error(`agents.yaml: local input overlaps a generated file: ${local}`);
+      if (!global && (statePaths.has(key) || key.startsWith(".agents/adopted/"))) {
+        throw new Error(`agents.yaml: local input overlaps managed state: ${local}`);
+      }
+    }
   }
   return {
     version: 2,

@@ -220,17 +220,17 @@ async function currentSnapshot(
     repositoryRoot = temporary;
     commit = await resolveRemoteCommit(repositoryRoot, requestedRef);
   }
-  const cachedRoot = await ensureCachedSnapshot(source, commit, false);
-  const packageRoot = join(cachedRoot, ...source.path.split("/"));
   try {
+    const cachedRoot = await ensureCachedSnapshot(source, commit, false);
+    const packageRoot = join(cachedRoot, ...source.path.split("/"));
     await access(packageRoot);
     await assertNoEscapingPath(cachedRoot, packageRoot, "Git package path");
+    return { root: packageRoot, repositoryRoot: cachedRoot, source, commit, requestedRef };
   } catch (error) {
-    if (temporary) await rm(temporary, { recursive: true, force: true });
     throw error instanceof Error ? error : new Error(String(error));
+  } finally {
+    if (temporary) await rm(temporary, { recursive: true, force: true });
   }
-  if (temporary) await rm(temporary, { recursive: true, force: true });
-  return { root: packageRoot, repositoryRoot: cachedRoot, source, commit, requestedRef };
 }
 
 export async function resolveV2Source(

@@ -196,6 +196,11 @@ async function readBytes(path: string): Promise<Buffer | undefined> {
   }
 }
 
+async function managedExpectedHash(path: string, previous: string | undefined): Promise<string | undefined> {
+  if (previous === undefined) return undefined;
+  return (await fileHash(path)) === null ? null : previous;
+}
+
 async function readConfig(paths: ScopePaths, global: boolean): Promise<ConsumerConfigV2> {
   if ((await lstat(paths.configPath)).isSymbolicLink()) throw new Error(`Refusing symlink configuration: ${paths.configPath}`);
   const bytes = await readFile(paths.configPath, "utf8");
@@ -1043,10 +1048,18 @@ function sourceMatchesLock(selection: V2PackageSelection | V2PackSelection, lock
 }
 
 async function assertFilteredUpdateStable(config: ConsumerConfigV2, lock: V2LockFile, selected: Set<string>, options: V2CommandOptions): Promise<void> {
+  const packageIds = new Set(config.packages.map((selection) => selection.id));
+  for (const id of Object.keys(lock.packages)) {
+    if (!packageIds.has(id) && !selected.has(id)) throw new Error(`Filtered update found unrelated removed package: ${id}`);
+  }
   for (const selection of config.packages) {
     if (selected.has(selection.id)) continue;
     const locked = lock.packages[selection.id];
     if (!locked || !(await sourceMatchesLock(selection, locked, options.projectRoot))) throw new Error(`Filtered update found unrelated unresolved package changes: ${selection.id}`);
+  }
+  const packIds = new Set(config.packs.map((selection) => selection.id));
+  for (const id of Object.keys(lock.packs)) {
+    if (!packIds.has(id) && !selected.has(id)) throw new Error(`Filtered update found unrelated removed pack: ${id}`);
   }
   for (const selection of config.packs) {
     if (selected.has(selection.id)) continue;
@@ -1399,11 +1412,12 @@ async function writeRenderedState(
   for (const [logical, generated] of rendered.generated) {
     const destination = logicalDestination(options, logical);
     plannedPaths.add(destination);
-    writes.push({ path: destination, contents: generated.contents, expectedSha256: oldLock.generatedFiles[logical]?.sha256 });
+    writes.push({ path: destination, contents: generated.contents, expectedSha256: await managedExpectedHash(destination, oldLock.generatedFiles[logical]?.sha256) });
   }
   for (const logical of Object.keys(oldLock.generatedFiles)) {
     if (rendered.generated.has(logical)) continue;
-    writes.push({ path: logicalDestination(options, logical), contents: undefined, expectedSha256: oldLock.generatedFiles[logical].sha256 });
+    const destination = logicalDestination(options, logical);
+    writes.push({ path: destination, contents: undefined, expectedSha256: await managedExpectedHash(destination, oldLock.generatedFiles[logical].sha256) });
   }
   const configBytes = Buffer.from(stringify(rendered.config), "utf8");
   const lockBytes = Buffer.from(stringify(nextLock), "utf8");
