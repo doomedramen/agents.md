@@ -1,9 +1,9 @@
-# agents.md
+# rulepacks
 
 Build your project's `AGENTS.md` from reusable instructions and local project
 notes.
 
-`agents.md` is a command-line tool for managing coding-agent guidance. Choose
+`rulepacks` is a command-line tool for managing coding-agent guidance. Choose
 Markdown instructions from Git repositories, add the facts specific to your
 project, and generate one `AGENTS.md` containing the full text.
 
@@ -30,10 +30,10 @@ Run these commands from your project directory:
 
 ```sh
 # Create the configuration and project notes.
-npx @doomedramen/agents.md init
+npx rulepacks init
 
 # Add shared TypeScript guidance from a public Git repository.
-npx @doomedramen/agents.md add github:doomedramen/agent-packages#packages/project-typescript --ref main
+npx rulepacks add github:doomedramen/agent-packages#packages/project-typescript --ref main
 ```
 
 Already have an `AGENTS.md`? Use `init --adopt` for the first command. It preserves
@@ -45,8 +45,8 @@ paths, architecture, and any exceptions to the shared rules. Then rebuild and
 verify:
 
 ```sh
-npx @doomedramen/agents.md render
-npx @doomedramen/agents.md check
+npx rulepacks render
+npx rulepacks check
 ```
 
 You now have shared guidance and your project notes together in `AGENTS.md`.
@@ -80,10 +80,10 @@ After changing `.agents/project.md`, run `render` and `check`.
 To review and apply newer shared guidance:
 
 ```sh
-npx @doomedramen/agents.md outdated
-npx @doomedramen/agents.md diff --update
-npx @doomedramen/agents.md update
-npx @doomedramen/agents.md check
+npx rulepacks outdated
+npx rulepacks diff --update
+npx rulepacks update
+npx rulepacks check
 ```
 
 `outdated` checks whether your selected refs have moved. `diff --update` previews

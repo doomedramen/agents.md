@@ -125,14 +125,14 @@ export async function recoverTransaction(journalPath: string, allowActiveLock = 
     throw new Error(`Recovery journal is unreadable: ${journalPath}: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (await exists(journal.lockPath)) {
-    if (activeLocks.has(journal.lockPath) && !allowActiveLock) throw new Error(`Another agents.md operation is already running: ${journal.lockPath}`);
+    if (activeLocks.has(journal.lockPath) && !allowActiveLock) throw new Error(`Another rulepacks operation is already running: ${journal.lockPath}`);
     try {
       const pid = Number.parseInt((await readFile(journal.lockPath, "utf8")).trim(), 10);
       if (!Number.isInteger(pid)) throw new Error(`Recovery lock is unreadable: ${journal.lockPath}`);
       if (pid !== process.pid) {
         try {
           process.kill(pid, 0);
-          throw new Error(`Another agents.md operation is already running: ${journal.lockPath}`);
+          throw new Error(`Another rulepacks operation is already running: ${journal.lockPath}`);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
         }
@@ -162,7 +162,7 @@ export async function recoverTransaction(journalPath: string, allowActiveLock = 
 }
 
 async function acquireLock(lockPath: string): Promise<void> {
-  if (activeLocks.has(lockPath)) throw new Error(`Another agents.md operation is already running: ${lockPath}`);
+  if (activeLocks.has(lockPath)) throw new Error(`Another rulepacks operation is already running: ${lockPath}`);
   await mkdir(dirname(lockPath), { recursive: true });
   try {
     const handle = await open(lockPath, "wx");
@@ -171,14 +171,14 @@ async function acquireLock(lockPath: string): Promise<void> {
     activeLocks.add(lockPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      if (activeLocks.has(lockPath)) throw new Error(`Another agents.md operation is already running: ${lockPath}`);
+      if (activeLocks.has(lockPath)) throw new Error(`Another rulepacks operation is already running: ${lockPath}`);
       let pid: number;
       try {
         pid = Number.parseInt((await readFile(lockPath, "utf8")).trim(), 10);
       } catch {
-        throw new Error(`Another agents.md operation is already running: ${lockPath}`);
+        throw new Error(`Another rulepacks operation is already running: ${lockPath}`);
       }
-      if (!Number.isInteger(pid) || pid === process.pid) throw new Error(`Another agents.md operation is already running: ${lockPath}`);
+      if (!Number.isInteger(pid) || pid === process.pid) throw new Error(`Another rulepacks operation is already running: ${lockPath}`);
       try {
         process.kill(pid, 0);
       } catch (probeError) {
@@ -187,7 +187,7 @@ async function acquireLock(lockPath: string): Promise<void> {
           return acquireLock(lockPath);
         }
       }
-      throw new Error(`Another agents.md operation is already running: ${lockPath}`);
+      throw new Error(`Another rulepacks operation is already running: ${lockPath}`);
     }
     throw error;
   }

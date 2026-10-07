@@ -27,7 +27,7 @@ class ExitCodeError extends Error {
 }
 
 function usage(): string {
-  return `Usage: agents.md <command> [arguments]
+  return `Usage: rulepacks <command> [arguments]
 
 Commands:
   init [--global] [--adopt] [--agents <list>] [--dry-run]
@@ -42,8 +42,8 @@ Commands:
   edit [--dir <directory>] [--global]
   migrate [--dry-run]
 
-Run agents.md <command> --help for command help.
-Equivalent invocation: npx @doomedramen/agents.md <command> ...`;
+Run rulepacks <command> --help for command help.
+Equivalent invocation: npx rulepacks <command> ...`;
 }
 
 function commandHelp(command: string): string {
@@ -60,7 +60,7 @@ function commandHelp(command: string): string {
     edit: "edit [--dir <directory>] [--global]",
     migrate: "migrate [--dry-run]",
   };
-  return text[command] ? `Usage: agents.md ${text[command]}` : usage();
+  return text[command] ? `Usage: rulepacks ${text[command]}` : usage();
 }
 
 interface Parsed {

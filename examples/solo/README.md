@@ -7,10 +7,10 @@ No private index, account, or organization setup is required.
 From a consumer repository:
 
 ```sh
-agents.md init
-agents.md add github:doomedramen/agent-packages#packages/project-typescript --ref main
-agents.md edit
-agents.md check
+rulepacks init
+rulepacks add github:doomedramen/agent-packages#packages/project-typescript --ref main
+rulepacks edit
+rulepacks check
 ```
 
 Review `agents.yaml`, generated `AGENTS.md`, local additions, and

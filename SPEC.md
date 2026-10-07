@@ -1,6 +1,6 @@
-# agents.md v2 specification
+# rulepacks v2 specification
 
-`agents.md` composes standing Markdown guidance from ordinary Git repositories.
+`rulepacks` composes standing Markdown guidance from ordinary Git repositories.
 It does not install skills, run package scripts, or provide a registry. Git
 repositories, commits, pull requests, and the consumer lockfile remain the
 source of truth.

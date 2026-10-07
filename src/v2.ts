@@ -780,7 +780,7 @@ async function prepareImplicitInitialization(options: AddV2Options): Promise<{ c
   const paths = scopePaths(options);
   await assertNoLegacyScope(options);
   const legacy = legacyPaths(options);
-  if (await fileExists(legacy.state)) throw new Error("Legacy state exists; run agents.md migrate or use init --adopt after review");
+  if (await fileExists(legacy.state)) throw new Error("Legacy state exists; run rulepacks migrate or use init --adopt after review");
   if (await fileExists(paths.lockPath)) throw new Error(`Refusing orphan lockfile: ${paths.lockPath}`);
   if (options.agents !== undefined && (!options.global || options.agents.length === 0 || options.agents.some((agent) => !registeredAgents().includes(agent)))) {
     throw new Error(`Unknown or invalid global agent selection; registered agents: ${registeredAgents().join(", ")}`);
@@ -985,8 +985,8 @@ export async function checkV2(options: V2CommandOptions): Promise<void> {
   const config = await readConfig(paths, Boolean(options.global));
   const lock = await readLock(paths);
   if (lock.rendererVersion !== RENDERER_VERSION) throw new Error(`Unsupported renderer version in lock: ${lock.rendererVersion}`);
-  if (lock.configSha256 !== canonicalConfigHash(config)) throw checkFailure("Configuration changed since last render; run agents.md render");
-  if (lock.selectionSha256 && lock.selectionSha256 !== selectionFingerprint(config)) throw checkFailure("Package or pack source/ref membership changed; run agents.md update");
+  if (lock.configSha256 !== canonicalConfigHash(config)) throw checkFailure("Configuration changed since last render; run rulepacks render");
+  if (lock.selectionSha256 && lock.selectionSha256 !== selectionFingerprint(config)) throw checkFailure("Package or pack source/ref membership changed; run rulepacks update");
   let rendered: RenderedState;
   try {
     rendered = await renderLoadedState({ ...options, previousLock: lock });
@@ -999,35 +999,35 @@ export async function checkV2(options: V2CommandOptions): Promise<void> {
   const expectedPackages = new Set(config.packages.map((selection) => selection.id));
   const expectedPacks = new Set(config.packs.map((selection) => selection.id));
   if (Object.keys(lock.packages).some((id) => !expectedPackages.has(id)) || Object.keys(lock.packs).some((id) => !expectedPacks.has(id))) {
-    throw checkFailure("Lock ownership differs from configuration; run agents.md render");
+    throw checkFailure("Lock ownership differs from configuration; run rulepacks render");
   }
   for (const [local, expected] of Object.entries(lock.localFiles)) {
     const absolute = localAbsolutePath(paths, options, local);
     await assertNoSymlinkPath(absolute, options.global ? paths.scopeRoot : options.projectRoot);
     const actual = await fileHash(absolute);
-    if (actual !== expected) throw checkFailure(`Local fragment drift detected: ${local}; run agents.md edit or render`);
+    if (actual !== expected) throw checkFailure(`Local fragment drift detected: ${local}; run rulepacks edit or render`);
   }
   const renderedLocals = new Set(Object.values(rendered.outputLocks).flatMap((output) => output.local));
   if (Object.keys(lock.localFiles).some((local) => !renderedLocals.has(local)) || [...renderedLocals].some((local) => lock.localFiles[local] === undefined)) {
-    throw checkFailure("Local input ownership differs from lock; run agents.md render");
+    throw checkFailure("Local input ownership differs from lock; run rulepacks render");
   }
   const expectedGenerated = Object.keys(lock.generatedFiles).sort();
   const plannedGenerated = [...rendered.generated.keys()].sort();
-  if (JSON.stringify(expectedGenerated) !== JSON.stringify(plannedGenerated)) throw checkFailure("Generated file ownership differs from lock; run agents.md render");
+  if (JSON.stringify(expectedGenerated) !== JSON.stringify(plannedGenerated)) throw checkFailure("Generated file ownership differs from lock; run rulepacks render");
   const expectedOwnership = Object.keys(lock.ownership).sort();
-  if (JSON.stringify(expectedOwnership) !== JSON.stringify(plannedGenerated)) throw checkFailure("Generated ownership differs from lock; run agents.md render");
+  if (JSON.stringify(expectedOwnership) !== JSON.stringify(plannedGenerated)) throw checkFailure("Generated ownership differs from lock; run rulepacks render");
   for (const [logical, generated] of rendered.generated) {
     const locked = lock.generatedFiles[logical];
     if (!locked || locked.kind !== generated.kind || locked.sha256 !== sha256(generated.contents) || JSON.stringify(locked.owners) !== JSON.stringify(generated.owners) || JSON.stringify(lock.ownership[logical] ?? []) !== JSON.stringify(locked.owners)) {
-      throw checkFailure(`Generated ownership differs from lock: ${logical}; run agents.md render`);
+      throw checkFailure(`Generated ownership differs from lock: ${logical}; run rulepacks render`);
     }
     const destination = logicalDestination(options, logical);
     await assertNoSymlinkPath(destination, options.global ? userHome() : options.projectRoot);
     const actual = await fileHash(destination);
-    if (actual !== sha256(generated.contents)) throw checkFailure(`Generated file drift detected: ${logical}; run agents.md render`);
+    if (actual !== sha256(generated.contents)) throw checkFailure(`Generated file drift detected: ${logical}; run rulepacks render`);
   }
   if (JSON.stringify(lock.outputs) !== JSON.stringify(rendered.outputLocks)) {
-    throw checkFailure("Output ownership differs from lock; run agents.md render");
+    throw checkFailure("Output ownership differs from lock; run rulepacks render");
   }
 }
 
@@ -1327,7 +1327,7 @@ export async function editV2(options: V2CommandOptions & { directory?: string })
   await assertNoSymlinkPath(absolute, options.global ? paths.scopeRoot : options.projectRoot);
   const editor = process.env.VISUAL || process.env.EDITOR;
   if (!editor) {
-    console.log(`Edit ${absolute}, then run agents.md render`);
+    console.log(`Edit ${absolute}, then run rulepacks render`);
     return { path: absolute, edited: false };
   }
   if (!(await fileExists(absolute))) {
@@ -1604,13 +1604,13 @@ async function assertNoLegacyScope(options: V2CommandOptions): Promise<void> {
   if (await fileExists(paths.configPath)) {
     try {
       const value = parse(await readFile(paths.configPath, "utf8")) as unknown;
-      if (isRecord(value) && value.version === 1) throw new Error("Legacy agents.yaml found; run agents.md migrate before v2 commands");
+      if (isRecord(value) && value.version === 1) throw new Error("Legacy agents.yaml found; run rulepacks migrate before v2 commands");
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("Legacy agents.yaml")) throw error;
     }
   }
   if (await fileExists(legacy.lock) && !await fileExists(paths.lockPath)) {
-    throw new Error("Legacy lockfile found; run agents.md migrate before v2 commands");
+    throw new Error("Legacy lockfile found; run rulepacks migrate before v2 commands");
   }
 }
 
@@ -1637,7 +1637,7 @@ export async function initV2(options: V2CommandOptions & { adopt?: boolean; agen
     return { created: false, paths: [paths.configPath, paths.lockPath] };
   }
   const legacy = legacyPaths(options);
-  if (await fileExists(legacy.state)) throw new Error("Legacy state exists; run agents.md migrate or use init --adopt after review");
+  if (await fileExists(legacy.state)) throw new Error("Legacy state exists; run rulepacks migrate or use init --adopt after review");
   if (await fileExists(paths.lockPath)) throw new Error(`Refusing orphan lockfile: ${paths.lockPath}`);
   if (options.agents !== undefined && (!options.global || options.agents.length === 0 || options.agents.some((agent) => !registeredAgents().includes(agent)))) {
     throw new Error(`Unknown or invalid global agent selection; registered agents: ${registeredAgents().join(", ")}`);

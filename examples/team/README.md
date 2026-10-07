@@ -6,10 +6,10 @@ reference pack is already available for a working walkthrough:
 Developers use the same commands as solo users:
 
 ```sh
-agents.md init
-agents.md add github:doomedramen/agent-packages#packs/typescript-project --ref main
-agents.md edit
-agents.md check
+rulepacks init
+rulepacks add github:doomedramen/agent-packages#packs/typescript-project --ref main
+rulepacks edit
+rulepacks check
 ```
 
 Commit reviewed configuration, generated instructions, local project context,

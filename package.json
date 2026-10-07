@@ -1,10 +1,10 @@
 {
-  "name": "@doomedramen/agents.md",
+  "name": "rulepacks",
   "version": "0.2.1",
   "description": "Git-native package manager for AI coding-agent instructions",
   "type": "module",
   "bin": {
-    "agents.md": "dist/cli.js"
+    "rulepacks": "dist/cli.js"
   },
   "files": [
     "dist"

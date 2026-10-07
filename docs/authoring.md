@@ -43,9 +43,9 @@ and source license.
 From a consumer project, initialize and add the local package directory:
 
 ```sh
-npx @doomedramen/agents.md init
-npx @doomedramen/agents.md add ../shared-guidance/typescript
-npx @doomedramen/agents.md check
+npx rulepacks init
+npx rulepacks add ../shared-guidance/typescript
+npx rulepacks check
 ```
 
 Use `init --adopt` when the consumer already has an `AGENTS.md`. Inspect the
@@ -88,7 +88,7 @@ packs, scripts, credentials, or consumer local files.
 Add the pack from its published directory:
 
 ```sh
-npx @doomedramen/agents.md add github:doomedramen/agent-packages#packs/typescript-project --ref main
+npx rulepacks add github:doomedramen/agent-packages#packs/typescript-project --ref main
 ```
 
 The consumer lockfile records the recipe commit and each member commit

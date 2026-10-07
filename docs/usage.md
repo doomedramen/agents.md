@@ -3,8 +3,8 @@
 Start with the [README quick start](../README.md#get-started). This guide covers
 common changes after your first setup.
 
-Every command below uses `npx @doomedramen/agents.md`. If you have installed the
-CLI, the equivalent command is `agents.md`.
+Every command below uses `npx rulepacks`. If you have installed the
+CLI, the equivalent command is `rulepacks`.
 
 ## Add shared instructions
 
@@ -12,23 +12,23 @@ A source identifies a Git repository and the directory containing a package or
 pack. `--ref` selects a branch, tag, or commit.
 
 ```sh
-npx @doomedramen/agents.md add github:doomedramen/agent-packages#packages/project-typescript --ref main
+npx rulepacks add github:doomedramen/agent-packages#packages/project-typescript --ref main
 ```
 
 For a team setup containing several packages, add a pack:
 
 ```sh
-npx @doomedramen/agents.md add github:doomedramen/agent-packages#packs/typescript-project --ref main
+npx rulepacks add github:doomedramen/agent-packages#packs/typescript-project --ref main
 ```
 
 Local sources use explicit paths, which are useful while authoring a package:
 
 ```sh
-npx @doomedramen/agents.md add ./shared-guidance/typescript
+npx rulepacks add ./shared-guidance/typescript
 ```
 
 Review a source's Markdown before adding it. Private Git sources use your
-existing Git access; you do not need an agents.md account or registry.
+existing Git access; you do not need an rulepacks account or registry.
 
 ## Keep project facts local
 
@@ -39,11 +39,11 @@ projects using the same library or conventions.
 You can edit this file directly, then run:
 
 ```sh
-npx @doomedramen/agents.md render
-npx @doomedramen/agents.md check
+npx rulepacks render
+npx rulepacks check
 ```
 
-Or run `npx @doomedramen/agents.md edit`. It opens the local notes using `VISUAL`
+Or run `npx rulepacks edit`. It opens the local notes using `VISUAL`
 or `EDITOR` and renders when the editor exits. Without either variable, it prints
 the file path and tells you to render after editing.
 
@@ -108,10 +108,10 @@ exit code 1 when sources changed. A preview does not change consumer files.
 Use the normal review sequence:
 
 ```sh
-npx @doomedramen/agents.md outdated
-npx @doomedramen/agents.md diff --update
-npx @doomedramen/agents.md update
-npx @doomedramen/agents.md check
+npx rulepacks outdated
+npx rulepacks diff --update
+npx rulepacks update
+npx rulepacks check
 ```
 
 To update one selection, run `update <id>`. If its ref is pinned to a commit,
@@ -126,7 +126,7 @@ Commit `agents.yaml`, `agents.lock`, generated instructions, and configured loca
 Markdown files. Run the following from the consumer project in CI:
 
 ```sh
-npx @doomedramen/agents.md check
+npx rulepacks check
 ```
 
 This catches changes made to generated files or inputs without rebuilding. It
@@ -143,10 +143,10 @@ For personal rules that apply across projects, initialize global scope and
 choose the supported agents:
 
 ```sh
-npx @doomedramen/agents.md init --global --agents claude-code,codex
-npx @doomedramen/agents.md add github:doomedramen/agent-packages#packages/global-baseline --ref main --global
-npx @doomedramen/agents.md edit --global
-npx @doomedramen/agents.md check --global
+npx rulepacks init --global --agents claude-code,codex
+npx rulepacks add github:doomedramen/agent-packages#packages/global-baseline --ref main --global
+npx rulepacks edit --global
+npx rulepacks check --global
 ```
 
 Global scope has its own configuration, lockfile, and `local.md`. Use `--global`
@@ -163,8 +163,8 @@ Use multiple outputs when different directories need different guidance. The
 public monorepo pack provides an example:
 
 ```sh
-npx @doomedramen/agents.md add github:doomedramen/agent-packages#packs/typescript-monorepo --ref main
-npx @doomedramen/agents.md check
+npx rulepacks add github:doomedramen/agent-packages#packs/typescript-monorepo --ref main
+npx rulepacks check
 ```
 
 It writes root guidance and separate `apps/web/AGENTS.md` guidance. Local notes
@@ -177,15 +177,15 @@ Use `edit --dir apps/web` to edit that output's local notes.
 For a supported schema 1 project, preview the migration first:
 
 ```sh
-npx @doomedramen/agents.md migrate --dry-run
-npx @doomedramen/agents.md migrate
-npx @doomedramen/agents.md check
+npx rulepacks migrate --dry-run
+npx rulepacks migrate
+npx rulepacks check
 ```
 
 Global legacy state, multiple legacy owners, custom destinations, mixed state,
 or edits to generated files may require manual reconciliation. Migration does
 not guess which overwritten instructions should be retained.
 
-Run `npx @doomedramen/agents.md --help` for the command list, or append `--help`
+Run `npx rulepacks --help` for the command list, or append `--help`
 to a command to see its supported options. `init`, `add`, `remove`, and `update`
 support `--dry-run` for previewing those operations.

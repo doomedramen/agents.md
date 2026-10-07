@@ -120,7 +120,7 @@ Cache verified package snapshots under the existing configured agents directory.
 
 ### CLI semantics
 
-All examples use `agents.md`; document the equivalent `npx @doomedramen/agents.md` invocation. Provide `--help`, command help, and unknown-option errors.
+All examples use `rulepacks`; document the equivalent `npx rulepacks` invocation. Provide `--help`, command help, and unknown-option errors.
 
 | Command | Contract |
 | --- | --- |
@@ -275,10 +275,10 @@ These are proposed commands. Repository names are placeholders: automated tests 
 ### Global guidance, shared by either project workflow
 
 ```sh
-agents.md add github:your-team/agent-rules#packs/default --global --dry-run
-agents.md add github:your-team/agent-rules#packs/default --global
-agents.md edit --global
-agents.md check --global
+rulepacks add github:your-team/agent-rules#packs/default --global --dry-run
+rulepacks add github:your-team/agent-rules#packs/default --global
+rulepacks edit --global
+rulepacks check --global
 ```
 
 If existing guidance conflicts, explicitly adopt/reconcile it first. Generate `~/.claude/AGENTS.md` and an exact import `~/.claude/CLAUDE.md`; keep local personal text in the global `local.md`. A solo developer can replace the team source with a public package/pack or their own repository. Neither needs a company profile. Adding a second global pack must compose with the first.
@@ -286,13 +286,13 @@ If existing guidance conflicts, explicitly adopt/reconcile it first. Generate `~
 ### Express + MySQL + TypeScript + Prisma
 
 ```sh
-agents.md init
-agents.md add github:community/agent-rules#packages/typescript
-agents.md add github:community/agent-rules#packages/express
-agents.md add github:community/agent-rules#packages/prisma
-agents.md add github:community/agent-rules#packages/mysql
-agents.md edit
-agents.md check
+rulepacks init
+rulepacks add github:community/agent-rules#packages/typescript
+rulepacks add github:community/agent-rules#packages/express
+rulepacks add github:community/agent-rules#packages/prisma
+rulepacks add github:community/agent-rules#packages/mysql
+rulepacks edit
+rulepacks check
 ```
 
 Expect exactly one root `AGENTS.md` combining all selected fragments plus `.agents/project.md`. Root `CLAUDE.md` contains only `@AGENTS.md` and a newline. No nested files appear just because multiple technologies were selected. Test local context such as route/service directories and validation commands. Team members can add a shared project baseline; solo users can omit it. Global content is not copied into the project file.
@@ -302,14 +302,14 @@ As a separate equivalent fixture, install the `express-prisma-mysql` pack with o
 ### Next.js frontend + Hono backend in a Turborepo
 
 ```sh
-agents.md init
-agents.md add github:community/agent-rules#packages/turborepo
-agents.md add github:community/agent-rules#packages/nextjs --dir apps/web
-agents.md add github:community/agent-rules#packages/hono --dir apps/api
-agents.md edit
-agents.md edit --dir apps/web
-agents.md edit --dir apps/api
-agents.md check
+rulepacks init
+rulepacks add github:community/agent-rules#packages/turborepo
+rulepacks add github:community/agent-rules#packages/nextjs --dir apps/web
+rulepacks add github:community/agent-rules#packages/hono --dir apps/api
+rulepacks edit
+rulepacks edit --dir apps/web
+rulepacks edit --dir apps/api
+rulepacks check
 ```
 
 Expect root `AGENTS.md` for workspace conventions, `apps/web/AGENTS.md` for frontend guidance, and `apps/api/AGENTS.md` for backend guidance, each with an adjacent Claude import. Keep root rules out of the nested generated bodies. Test a pack recipe mapping `.` to Turborepo, `apps/web` to Next.js, and `apps/api` to Hono; its one-command installation produces the same directory layout. The tool does not scaffold the application itself.
