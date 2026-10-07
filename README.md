@@ -1,207 +1,112 @@
 # agents.md
 
-`agents.md` composes reviewed, versioned `AGENTS.md` guidance from Git
-repositories. It gives solo developers and teams the same workflow. It stores
-standing rules and project context; task-specific skills remain separate and
-are never installed or inferred.
+Build your project's `AGENTS.md` from reusable instructions and local project
+notes.
 
-Requirements: Node.js 20+ and Git.
+`agents.md` is a command-line tool for managing coding-agent guidance. Choose
+Markdown instructions from Git repositories, add the facts specific to your
+project, and generate one `AGENTS.md` containing the full text.
 
-## Personal project: public packages
+Requires **Node.js 20+ and Git**. Run it with `npx`; no separate installation is
+needed.
 
-Initialize a project, select public packages, add private local context, and
-review upstream changes:
+## Why use it?
+
+Several projects often need the same guidance: TypeScript conventions, framework
+rules, UI library patterns, or team standards. Copying those instructions into
+every project makes updates hard to track.
+
+Keep shared guidance in one Git repository instead. Each project selects what it
+needs, keeps its own notes locally, and locks the shared sources to exact commits.
+You can review an update before applying it.
+
+The generated `AGENTS.md` contains the instructions themselves. Agents do not
+need to follow paths to the shared source files. The tool manages those files;
+your coding agent decides how to load and follow the resulting guidance.
+
+## Get started
+
+Run these commands from your project directory:
 
 ```sh
+# Create the configuration and project notes.
 npx @doomedramen/agents.md init
+
+# Add shared TypeScript guidance from a public Git repository.
 npx @doomedramen/agents.md add github:doomedramen/agent-packages#packages/project-typescript --ref main
-npx @doomedramen/agents.md edit
+```
+
+Already have an `AGENTS.md`? Use `init --adopt` for the first command. It preserves
+a backup and copies your existing instructions into the local project notes.
+Custom `CLAUDE.md` content must be reconciled before adoption.
+
+Open `.agents/project.md` in your editor. Add your project's commands, important
+paths, architecture, and any exceptions to the shared rules. Then rebuild and
+verify:
+
+```sh
+npx @doomedramen/agents.md render
+npx @doomedramen/agents.md check
+```
+
+You now have shared guidance and your project notes together in `AGENTS.md`.
+Review the changes and commit the files listed below. The example uses `main`
+for convenience; use a reviewed tag or commit when you want to pin the selected
+version explicitly. The lockfile records the exact commit either way.
+
+## What goes where?
+
+| File | Purpose | Edit it? |
+| --- | --- | --- |
+| `agents.yaml` | Selects shared sources and which instructions to include | Yes |
+| `.agents/project.md` | Your project's commands, structure, and specific rules | Yes |
+| `agents.lock` | Records source commits and file hashes for reproducible output | Generated |
+| `AGENTS.md` | Full instructions for your coding agent | Generated |
+| `CLAUDE.md` | Imports `AGENTS.md` for Claude Code | Generated |
+
+Commit all five files so teammates and CI use the same guidance. Edit the source
+Markdown or local notes, then run `render`; editing the generated `AGENTS.md`
+directly causes drift that `check` reports.
+
+A **package** is a set of shared Markdown files, called **fragments**. Each
+fragment covers one topic. A **pack** is a recipe that selects several packages,
+so a team can share a whole setup with one `add` command. Both live in ordinary
+Git repositories.
+
+## Day-to-day use
+
+After changing `.agents/project.md`, run `render` and `check`.
+
+To review and apply newer shared guidance:
+
+```sh
+npx @doomedramen/agents.md outdated
 npx @doomedramen/agents.md diff --update
 npx @doomedramen/agents.md update
 npx @doomedramen/agents.md check
 ```
 
-The package is public and reviewable in the
-[`doomedramen/agent-packages`](https://github.com/doomedramen/agent-packages)
-repository. Pin `main` only for a walkthrough; use a reviewed tag or commit
-for a production configuration. A local source uses an explicit path, for
-example `./examples/packages/typescript`; GitHub shorthand is not a local
-path. The equivalent executable invocation is `agents.md ...`.
+`outdated` checks whether your selected refs have moved. `diff --update` previews
+the changes; `update` applies them. For sources pinned to a commit, choose a new
+`ref` in `agents.yaml` before updating.
 
-The default root output combines all selected fragments and
-`.agents/project.md` into one `AGENTS.md`. `CLAUDE.md` is exactly
-`@AGENTS.md\n`. Selecting Express, MySQL, TypeScript, and Prisma does not split
-one backend into four files.
+## Learn more
 
-## Team project: shared conventions
-
-Teams publish ordinary Git packages or a pack from a private repository and
-review the consumer configuration and lockfile through Git:
-
-```sh
-agents.md init
-agents.md add github:doomedramen/agent-packages#packs/typescript-project --ref main
-agents.md edit
-agents.md check
-```
-
-The public pack is a working baseline, not a hosted registry or special
-service. Fork `agent-packages` or publish an ordinary Git repository when a
-team needs its own reviewed rules. If CI must verify a convention, include the
-required package or pack in committed `agents.yaml`; global guidance cannot
-provide a repository guarantee.
-
-## Monorepos
-
-Use separate outputs only where native agent loading needs separate directory
-guidance:
-
-```sh
-agents.md init
-agents.md add github:doomedramen/agent-packages#packs/typescript-monorepo --ref main
-agents.md check
-```
-
-This produces root and `apps/web` outputs. Root selections are not copied into
-nested outputs by default. Native agent loading decides which files are
-visible; agents.md does not claim universal precedence.
-
-## Real public examples
-
-The runnable source packages, pack recipes, and committed consumer fixtures
-live in [`doomedramen/agent-packages`](https://github.com/doomedramen/agent-packages):
-
-- [direct project example](https://github.com/doomedramen/agent-packages/tree/main/examples/direct-project)
-- [TypeScript monorepo example](https://github.com/doomedramen/agent-packages/tree/main/examples/typescript-monorepo)
-- [schema 2 packages](https://github.com/doomedramen/agent-packages/tree/main/packages)
-- [schema 2 packs](https://github.com/doomedramen/agent-packages/tree/main/packs)
-
-Each fixture commits its `agents.yaml`, `agents.lock`, generated instructions,
-and local inputs. Run `agents.md check` from the fixture directory to verify
-the committed state.
-
-## Configuration
-
-```yaml
-version: 2
-packages:
-  - id: project-typescript
-    source: github:doomedramen/agent-packages#packages/project-typescript
-    ref: main
-packs: []
-outputs:
-  - directory: .
-    use: [project-typescript]
-    exclude: []
-    local: [.agents/project.md]
-    adapters: [claude-code]
-```
-
-Packages provide fragments:
-
-```yaml
-schema: 2
-name: typescript
-description: TypeScript repository conventions
-fragments:
-  - id: boundaries
-    source: boundaries.md
-    title: Module boundaries
-```
-
-Use `exclude: [typescript/boundaries]` to remove one recommendation and put a
-replacement in `.agents/project.md`. Pack exclusions use
-`pack/member/fragment`. Exclusions must name real selected fragments.
-
-Generated output has a stable notice and labelled sections. Markdown bodies keep
-their content with CRLF normalized to LF. Commit `agents.yaml`, `agents.lock`,
-generated instructions, and local inputs.
-
-## Packs
-
-A pack is a shareable Git recipe, not a skill bundle:
-
-```yaml
-version: 2
-kind: pack
-name: express-prisma-mysql
-packages:
-  - id: typescript
-    source: ./packages/typescript
-  - id: express
-    source: ./packages/express
-outputs:
-  - directory: .
-    use: [typescript, express]
-    exclude: []
-```
-
-Relative members resolve from the recipe directory at its locked commit.
-External members can specify refs. Nested packs, scripts, credentials, and
-consumer local files are not allowed. Add a pack and a direct member together;
-removing the pack preserves the direct contribution.
-
-## Global guidance
-
-Global scope uses one composition and separate personal `local.md`:
-
-```sh
-agents.md add github:doomedramen/agent-packages#packages/global-baseline --ref main --global --dry-run
-agents.md add github:doomedramen/agent-packages#packages/global-baseline --ref main --global
-agents.md edit --global
-agents.md check --global
-agents.md outdated --global
-agents.md diff --update --global
-agents.md update --global
-```
-
-`init --global --agents claude-code,codex` selects registered destinations.
-Claude receives `AGENTS.md` plus exact `CLAUDE.md` import; Codex receives
-`AGENTS.md`. Existing guidance must be explicitly adopted/reconciled first.
-Tests can redirect home/config with `AGENTS_TEST_HOME` and
-`AGENTS_CONFIG_DIR`.
-
-## Drift and freshness
-
-`check` detects changed local inputs, generated files, adapters, missing files,
-and config/lock disagreement. It does not query moving remote refs. `outdated`
-does query requested refs and returns 1 when commits changed. `diff --update`
-previews current refs without consumer writes. `update` resolves and applies a
-recoverable transaction.
-
-## Authoring and licensing
-
-Keep one fragment focused on one coherent convention. README files for example
-packages state intended audience, assumptions, exclusions, and source license.
-Use ordinary Git history to publish and review packages or packs; no account,
-private index, hosted registry, or organization profile is required. Do not
-copy task-specific skills into packages. Mention an existing skill only as
-prose when useful.
-
-## Migration
-
-For a narrow schema 1 project, preview first:
-
-```sh
-agents.md migrate --dry-run
-agents.md migrate
-agents.md check
-```
-
-Multiple legacy owners, custom destinations, global state, mixed state, and
-edited generated files require manual reconciliation. Migration never guesses
-which overwritten legacy guidance a team intended to retain.
+- [Usage guide](docs/usage.md): sources, local edits, exclusions, updates, CI,
+  global guidance, and monorepos.
+- [Create packages and packs](docs/authoring.md): publish reusable instructions
+  for your own projects or team.
+- [Public packages and working examples](https://github.com/doomedramen/agent-packages):
+  inspect real source files and generated consumer projects.
 
 ## Development
 
 ```sh
 npm install
 npm run check
-npm pack --dry-run --json
-npm publish --dry-run
 ```
 
-`npm install` installs the Lefthook Git hooks. Pre-commit runs the build;
-pre-push runs the full check. Publishing runs the full check through
-`prepublishOnly`, and `prepack` rebuilds `dist/` immediately before the package
-tarball is created. Publishing remains an explicit maintainer action.
+`npm install` installs Lefthook hooks. Pre-commit builds the CLI; pre-push runs the
+full check. To inspect release contents, run `npm pack --dry-run --json` or
+`npm publish --dry-run`. Publishing runs checks and rebuilds `dist/`; an actual
+release requires an explicit maintainer action.
