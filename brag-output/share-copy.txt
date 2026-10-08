@@ -1,0 +1,1 @@
+I made rulepacks: reusable agent instructions, local project notes, and one generated AGENTS.md. Review shared-rule updates before applying them.
